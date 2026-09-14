@@ -3,13 +3,14 @@ from dataclasses import dataclass
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
-from marketingiq.domain.models import OrganizationCompany, Product
+from marketingiq.domain.models import MembershipRole, OrganizationCompany, Product
 
 
 @dataclass(frozen=True)
 class TenantContext:
     organization_id: str
-    actor_user_id: str | None = None
+    actor_user_id: str = ""
+    role: MembershipRole = MembershipRole.READ_ONLY
 
 
 class TenantRepository:

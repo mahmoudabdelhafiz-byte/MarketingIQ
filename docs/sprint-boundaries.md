@@ -18,3 +18,11 @@ audit model and architecture/security documentation.
 The recommended next Sprint 1 task is a thin authenticated HTTP application with organization
 selection, membership authorization and Product/ICP CRUD calling tenant-scoped application
 services, plus PostgreSQL integration tests that exercise database constraints and future RLS.
+
+## Sprint 1 Task 2 status
+
+The internal HTTP adapter, local password authentication, explicit membership-to-`TenantContext`
+authorization, and tenant-scoped Product, versioned ICP, and Company relationship use cases are now
+implemented. Super Admin remains a distinct platform flag and receives no implicit organization
+membership. External providers, AI research, campaigns, outreach, billing, and any commercial
+public API remain outside this increment.
