@@ -1,0 +1,1 @@
+"""MarketingIQ modular monolith."""
