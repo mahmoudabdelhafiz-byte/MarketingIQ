@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from marketingiq.domain.models import User
 
 password_hash = PasswordHash.recommended()
+TOKEN_ISSUER = "marketingiq-internal"
+TOKEN_AUDIENCE = "marketingiq-api"
 
 
 def hash_password(password: str) -> str:
@@ -24,12 +26,25 @@ def authenticate(session: Session, email: str, password: str) -> User | None:
 def create_access_token(user: User, secret: str, minutes: int = 30) -> str:
     now = datetime.now(UTC)
     return jwt.encode(
-        {"sub": user.id, "iat": now, "exp": now + timedelta(minutes=minutes)},
+        {
+            "sub": user.id,
+            "iat": now,
+            "exp": now + timedelta(minutes=minutes),
+            "iss": TOKEN_ISSUER,
+            "aud": TOKEN_AUDIENCE,
+        },
         secret,
         algorithm="HS256",
     )
 
 
 def decode_access_token(token: str, secret: str) -> str:
-    payload = jwt.decode(token, secret, algorithms=["HS256"], options={"require": ["sub", "exp"]})
+    payload = jwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        issuer=TOKEN_ISSUER,
+        audience=TOKEN_AUDIENCE,
+        options={"require": ["sub", "iat", "exp", "iss", "aud"]},
+    )
     return str(payload["sub"])

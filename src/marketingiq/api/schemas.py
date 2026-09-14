@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from marketingiq.domain.models import MembershipRole, ProductStatus
 
@@ -45,6 +45,13 @@ class ProductWrite(Schema):
     employee_max: int | None = Field(default=None, ge=0)
     criteria: list[Criterion] = Field(default_factory=list, max_length=100)
 
+    @model_validator(mode="after")
+    def validate_employee_range(self):
+        if self.employee_min is not None and self.employee_max is not None:
+            if self.employee_min > self.employee_max:
+                raise ValueError("employee_min must not exceed employee_max")
+        return self
+
 
 class ProductResponse(ProductWrite):
     id: str
@@ -63,6 +70,13 @@ class ICPWrite(Schema):
     employee_min: int | None = Field(default=None, ge=0)
     employee_max: int | None = Field(default=None, ge=0)
     criteria: list[Criterion] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_employee_range(self):
+        if self.employee_min is not None and self.employee_max is not None:
+            if self.employee_min > self.employee_max:
+                raise ValueError("employee_min must not exceed employee_max")
+        return self
 
 
 class ICPResponse(ICPWrite):

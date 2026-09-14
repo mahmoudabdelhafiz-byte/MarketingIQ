@@ -49,6 +49,13 @@ class CatalogService:
             self.session.rollback()
             raise ConflictError("The requested resource conflicts with existing data") from error
 
+    def _flush(self) -> None:
+        try:
+            self.session.flush()
+        except IntegrityError as error:
+            self.session.rollback()
+            raise ConflictError("The requested resource conflicts with existing data") from error
+
     def list_products(self) -> list[Product]:
         return list(
             self.session.scalars(
@@ -71,10 +78,22 @@ class CatalogService:
     def create_product(self, **data: object) -> Product:
         require_permission(self.tenant, Permission.WRITE_CATALOG)
         criteria = data.pop("criteria", [])
-        product = Product(organization_id=self.tenant.organization_id, **data)
+        allowed = {
+            key: data[key]
+            for key in (
+                "name",
+                "slug",
+                "description",
+                "value_proposition",
+                "employee_min",
+                "employee_max",
+            )
+            if key in data
+        }
+        product = Product(organization_id=self.tenant.organization_id, **allowed)
         product.criteria = [ProductCriterion(kind=item.kind, value=item.value) for item in criteria]
         self.session.add(product)
-        self.session.flush()
+        self._flush()
         _audit(self.session, self.tenant, "product.created", product)
         self._commit()
         return product
@@ -83,8 +102,16 @@ class CatalogService:
         require_permission(self.tenant, Permission.WRITE_CATALOG)
         product = self.get_product(product_id)
         criteria = data.pop("criteria", None)
-        for key, value in data.items():
-            setattr(product, key, value)
+        for key in (
+            "name",
+            "slug",
+            "description",
+            "value_proposition",
+            "employee_min",
+            "employee_max",
+        ):
+            if key in data:
+                setattr(product, key, data[key])
         if criteria is not None:
             product.criteria = [
                 ProductCriterion(kind=item.kind, value=item.value) for item in criteria
@@ -127,7 +154,7 @@ class CatalogService:
         icp = ICP(organization_id=self.tenant.organization_id, product_id=product_id, **data)
         icp.criteria = [ICPCriterion(kind=x.kind, value=x.value) for x in criteria]
         self.session.add(icp)
-        self.session.flush()
+        self._flush()
         _audit(self.session, self.tenant, "icp.created", icp)
         self._commit()
         return icp
@@ -148,7 +175,7 @@ class CatalogService:
         )
         revision.criteria = [ICPCriterion(kind=x.kind, value=x.value) for x in criteria]
         self.session.add(revision)
-        self.session.flush()
+        self._flush()
         _audit(self.session, self.tenant, "icp.revised", revision)
         self._commit()
         return revision
@@ -203,7 +230,7 @@ class CatalogService:
             )
         relation = OrganizationCompany(organization_id=self.tenant.organization_id, company=company)
         self.session.add(relation)
-        self.session.flush()
+        self._flush()
         _audit(self.session, self.tenant, "company.attached", relation)
         self._commit()
         return self.get_company(relation.id)
@@ -213,8 +240,9 @@ class CatalogService:
     ) -> OrganizationCompany:
         require_permission(self.tenant, Permission.WRITE_CATALOG)
         item = self.get_company(relationship_id)
-        for key, value in data.items():
-            setattr(item, key, value)
+        for key in ("lifecycle_status", "private_notes"):
+            if key in data:
+                setattr(item, key, data[key])
         _audit(self.session, self.tenant, "company.relationship_updated", item)
         self._commit()
         return item
