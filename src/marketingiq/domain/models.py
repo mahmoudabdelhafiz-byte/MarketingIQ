@@ -208,6 +208,7 @@ class OrganizationCompany(Base, TimestampMixin):
     company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"))
     lifecycle_status: Mapped[str | None] = mapped_column(String(50))
     private_notes: Mapped[str | None] = mapped_column(Text)
+    organization: Mapped[Organization] = relationship()
     company: Mapped[Company] = relationship()
 
 

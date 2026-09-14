@@ -1,3 +1,4 @@
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -24,6 +25,21 @@ from marketingiq.domain.models import (
 class CriterionData:
     kind: str
     value: str
+
+
+def normalize_criteria(
+    criteria: Iterable[CriterionData | Mapping[str, object]],
+) -> list[CriterionData]:
+    """Convert transport-neutral mappings to the application criterion DTO."""
+    normalized = []
+    for criterion in criteria:
+        if isinstance(criterion, CriterionData):
+            normalized.append(criterion)
+        else:
+            normalized.append(
+                CriterionData(kind=str(criterion["kind"]), value=str(criterion["value"]))
+            )
+    return normalized
 
 
 def _audit(session: Session, tenant: TenantContext, action: str, entity: object) -> None:
@@ -77,7 +93,7 @@ class CatalogService:
 
     def create_product(self, **data: object) -> Product:
         require_permission(self.tenant, Permission.WRITE_CATALOG)
-        criteria = data.pop("criteria", [])
+        criteria = normalize_criteria(data.pop("criteria", []))
         allowed = {
             key: data[key]
             for key in (
@@ -101,7 +117,8 @@ class CatalogService:
     def update_product(self, product_id: str, **data: object) -> Product:
         require_permission(self.tenant, Permission.WRITE_CATALOG)
         product = self.get_product(product_id)
-        criteria = data.pop("criteria", None)
+        raw_criteria = data.pop("criteria", None)
+        criteria = normalize_criteria(raw_criteria) if raw_criteria is not None else None
         for key in (
             "name",
             "slug",
@@ -150,7 +167,7 @@ class CatalogService:
     def create_icp(self, product_id: str, **data: object) -> ICP:
         require_permission(self.tenant, Permission.WRITE_CATALOG)
         self.get_product(product_id)
-        criteria = data.pop("criteria", [])
+        criteria = normalize_criteria(data.pop("criteria", []))
         icp = ICP(organization_id=self.tenant.organization_id, product_id=product_id, **data)
         icp.criteria = [ICPCriterion(kind=x.kind, value=x.value) for x in criteria]
         self.session.add(icp)
@@ -164,7 +181,9 @@ class CatalogService:
         require_permission(self.tenant, Permission.WRITE_CATALOG)
         old = self.get_icp(icp_id)
         old.is_active = False
-        criteria = data.pop("criteria", [CriterionData(x.kind, x.value) for x in old.criteria])
+        criteria = normalize_criteria(
+            data.pop("criteria", [CriterionData(x.kind, x.value) for x in old.criteria])
+        )
         values = {k: data.pop(k, getattr(old, k)) for k in ("name", "employee_min", "employee_max")}
         revision = ICP(
             organization_id=self.tenant.organization_id,

@@ -51,6 +51,26 @@ def test_api_tenant_isolation_and_shared_company(tmp_path):
         json={"name": "Safe", "slug": "safe", "criteria": [{"kind": "country", "value": "AE"}]},
     )
     assert product.status_code == 201
+    product_id = product.json()["id"]
+    updated = client.put(
+        f"/api/v1/organizations/{a_id}/products/{product_id}",
+        headers=headers,
+        json={"name": "Safe", "slug": "safe", "criteria": [{"kind": "industry", "value": "SaaS"}]},
+    )
+    assert updated.status_code == 200
+    icp = client.post(
+        f"/api/v1/organizations/{a_id}/products/{product_id}/icps",
+        headers=headers,
+        json={"name": "Enterprise", "criteria": [{"kind": "country", "value": "AE"}]},
+    )
+    assert icp.status_code == 201
+    revised = client.put(
+        f"/api/v1/organizations/{a_id}/icps/{icp.json()['id']}",
+        headers=headers,
+        json={"name": "Enterprise", "criteria": [{"kind": "country", "value": "SA"}]},
+    )
+    assert revised.status_code == 200
+    assert revised.json()["version"] == 2
     assert client.get(f"/api/v1/organizations/{b_id}/products", headers=headers).status_code == 404
     first = client.post(
         f"/api/v1/organizations/{a_id}/companies",
@@ -85,9 +105,8 @@ def test_read_only_cannot_write(tmp_path):
     engine = create_engine(url)
     Base.metadata.create_all(engine)
     with Session(engine) as session:
-        user = User(
-            email="reader@example.test", password_hash=hash_password("correct horse battery")
-        )
+        email = "reader@example.test"
+        user = User(email=email, password_hash=hash_password("correct horse battery"))
         org = Organization(name="Readers", slug="readers")
         session.add_all([user, org])
         session.flush()
@@ -100,7 +119,7 @@ def test_read_only_cannot_write(tmp_path):
         org_id = org.id
     client = TestClient(create_app(url, "a-secure-test-secret-that-is-long-enough"))
     token = client.post(
-        "/api/v1/auth/login", json={"email": user.email, "password": "correct horse battery"}
+        "/api/v1/auth/login", json={"email": email, "password": "correct horse battery"}
     ).json()["access_token"]
     response = client.post(
         f"/api/v1/organizations/{org_id}/products",
