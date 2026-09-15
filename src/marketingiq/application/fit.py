@@ -320,11 +320,11 @@ class FitAssessmentService:
 
     @staticmethod
     def _numbers(value: Any) -> list[int]:
-        if isinstance(value, (int, float)):
+        if isinstance(value, int | float):
             return [int(value)]
         if isinstance(value, dict):
             return [
-                int(x) for x in (value.get("min"), value.get("max")) if isinstance(x, (int, float))
+                int(x) for x in (value.get("min"), value.get("max")) if isinstance(x, int | float)
             ]
         import re
 
