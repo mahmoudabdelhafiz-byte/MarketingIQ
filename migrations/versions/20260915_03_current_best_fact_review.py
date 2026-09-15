@@ -38,8 +38,9 @@ def upgrade() -> None:
         "WHERE fact_key IS NULL"
     )
     with op.batch_alter_table("human_overrides") as batch:
-        batch.alter_column("fact_key", nullable=False)
-        batch.alter_column("action", nullable=False)
+        # MySQL CHANGE/MODIFY COLUMN requires the existing type to be supplied explicitly.
+        batch.alter_column("fact_key", existing_type=sa.String(150), nullable=False)
+        batch.alter_column("action", existing_type=sa.String(30), nullable=False)
 
     # Clean installs may already contain this index because the legacy bootstrap migration imports
     # live metadata. Guard index creation so this revision remains safe for both upgrade paths.
