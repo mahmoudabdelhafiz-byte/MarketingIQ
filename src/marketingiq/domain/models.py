@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -105,7 +106,10 @@ class OrganizationMembership(Base, TimestampMixin):
 
 class Product(Base, TimestampMixin):
     __tablename__ = "products"
-    __table_args__ = (UniqueConstraint("organization_id", "slug"),)
+    __table_args__ = (
+        UniqueConstraint("organization_id", "slug"),
+        UniqueConstraint("id", "organization_id"),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
@@ -136,10 +140,17 @@ class ProductCriterion(Base):
 
 class ICP(Base, TimestampMixin):
     __tablename__ = "icps"
-    __table_args__ = (UniqueConstraint("product_id", "name", "version"),)
+    __table_args__ = (
+        UniqueConstraint("product_id", "name", "version"),
+        ForeignKeyConstraint(
+            ["product_id", "organization_id"],
+            ["products.id", "products.organization_id"],
+            ondelete="CASCADE",
+        ),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
-    product_id: Mapped[str] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"))
+    product_id: Mapped[str] = mapped_column(String(36))
     name: Mapped[str] = mapped_column(String(200))
     employee_min: Mapped[int | None] = mapped_column(Integer)
     employee_max: Mapped[int | None] = mapped_column(Integer)
@@ -197,6 +208,7 @@ class OrganizationCompany(Base, TimestampMixin):
     company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"))
     lifecycle_status: Mapped[str | None] = mapped_column(String(50))
     private_notes: Mapped[str | None] = mapped_column(Text)
+    organization: Mapped[Organization] = relationship()
     company: Mapped[Company] = relationship()
 
 

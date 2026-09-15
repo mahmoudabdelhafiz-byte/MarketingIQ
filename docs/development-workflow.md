@@ -20,3 +20,20 @@ git push -u origin develop
 Then branch with `git switch -c feature/<short-name> develop`, commit, push, and open a PR whose
 base is `develop`. Protect `main` and `develop`, require passing checks and review, disallow force
 pushes, and limit direct pushes. Never open routine feature work directly against `main`.
+
+## Reproducible validation
+
+Runtime and development dependencies have compatible upper/lower bounds in `pyproject.toml`.
+`constraints/dev.txt` records the reviewed direct versions used by CI without replacing the
+standard Python packaging workflow. Set `PIP_CONSTRAINT=constraints/dev.txt` before the normal
+editable install to reproduce those direct selections. Upgrade the project metadata and
+constraint together, then run the full suite.
+
+GitHub Actions runs Python 3.12 against PostgreSQL 16, followed by Ruff, byte compilation, and
+pytest. `TEST_DATABASE_URL` enables tests marked `postgresql`; without it those retained tests
+are explicitly skipped rather than silently using SQLite.
+
+The Codex workspace's install failure is environmental: pip has no custom project index
+configuration, but its HTTPS traffic is routed through the workspace proxy, which returns HTTP
+403 while pip's isolated build environment requests Hatchling. No untrusted mirror or bypass is
+approved; CI uses the default package infrastructure supplied by GitHub-hosted runners.
