@@ -215,6 +215,8 @@ class ContactDiscoveryService:
                         self._add_email(contact, found.email, provider.key)
             except ProviderError as error:
                 usage.response_status, usage.error_category = "FAILURE", error.category
+                usage.completed_at = self.now
+                self.session.commit()
                 raise
             finally:
                 usage.completed_at = self.now
@@ -334,6 +336,8 @@ class ContactDiscoveryService:
             except ProviderError as error:
                 usage.response_status = "FAILURE"
                 usage.error_category = error.category
+                usage.completed_at = self.now
+                self.session.commit()
                 raise
             finally:
                 usage.completed_at = self.now
@@ -402,6 +406,8 @@ class ContactDiscoveryService:
             except ProviderError as error:
                 usage.response_status = "FAILURE"
                 usage.error_category = error.category
+                usage.completed_at = self.now
+                self.session.commit()
                 raise
             finally:
                 usage.completed_at = self.now
