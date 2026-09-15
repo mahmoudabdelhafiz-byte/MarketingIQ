@@ -2,8 +2,9 @@ name: CI
 
 on:
   pull_request:
-  push:
     branches: [develop]
+  push:
+    branches: [develop, "feature/**"]
 
 jobs:
   test:
