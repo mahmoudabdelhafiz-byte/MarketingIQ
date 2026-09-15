@@ -28,6 +28,14 @@ class ProviderRateLimited(ProviderError):
     category = "RATE_LIMITED"
 
 
+class ProviderAuthenticationError(ProviderError):
+    category = "AUTHENTICATION_ERROR"
+
+
+class ProviderMalformedResponse(ProviderError):
+    category = "MALFORMED_RESPONSE"
+
+
 @dataclass(frozen=True)
 class ProviderFact:
     key: str
@@ -50,6 +58,28 @@ class ProviderResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class ProviderContact:
+    reference: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    full_name: str | None = None
+    job_title: str | None = None
+    department: str | None = None
+    seniority: str | None = None
+    email: str | None = None
+    confidence: int | None = None
+
+
+@dataclass(frozen=True)
+class ContactProviderResult:
+    provider_key: str
+    contacts: tuple[ProviderContact, ...] = ()
+    request_identifier: str | None = None
+    credits_used: int | None = None
+    credits_remaining: int | None = None
+
+
 class CompanyEnrichmentProvider(Protocol):
     key: str
     capabilities: frozenset[ProviderCapability]
@@ -67,10 +97,12 @@ class CompanySearchProvider(Protocol):
 
 
 class ContactSearchProvider(Protocol):
-    def search_contacts(self, company_identifier: str) -> ProviderResult: ...
+    def search_contacts(
+        self, company_identifier: str, max_results: int
+    ) -> ContactProviderResult: ...
 
 
 class EmailProvider(Protocol):
-    def find_email(self, person: dict[str, Any]) -> ProviderResult: ...
+    def find_email(self, person: dict[str, Any]) -> ContactProviderResult: ...
 
-    def verify_email(self, email: str) -> ProviderResult: ...
+    def verify_email(self, email: str) -> ContactProviderResult: ...

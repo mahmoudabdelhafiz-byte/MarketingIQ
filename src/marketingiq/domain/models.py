@@ -122,6 +122,22 @@ class QualificationStatus(enum.StrEnum):
     STALE = "STALE"
 
 
+class BuyerRoleMatch(enum.StrEnum):
+    EXACT = "EXACT"
+    STRONG = "STRONG"
+    PARTIAL = "PARTIAL"
+    UNKNOWN = "UNKNOWN"
+
+
+class EmailVerificationStatus(enum.StrEnum):
+    UNKNOWN = "UNKNOWN"
+    VALID = "VALID"
+    INVALID = "INVALID"
+    ACCEPT_ALL = "ACCEPT_ALL"
+    RISKY = "RISKY"
+    UNVERIFIABLE = "UNVERIFIABLE"
+
+
 class Organization(Base, TimestampMixin):
     __tablename__ = "organizations"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -412,6 +428,69 @@ class ProviderUsage(Base):
     request_identifier: Mapped[str | None] = mapped_column(String(255))
     error_category: Mapped[str | None] = mapped_column(String(100))
     cache_hit: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class ContactCandidate(Base):
+    """A minimal, tenant-private B2B professional contact observation."""
+
+    __tablename__ = "contact_candidates"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "provider_key", "provider_contact_reference"),
+        Index("ix_contact_tenant_relationship", "organization_id", "organization_company_id"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    organization_company_id: Mapped[str] = mapped_column(ForeignKey("organization_companies.id"))
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), index=True)
+    qualification_id: Mapped[str] = mapped_column(ForeignKey("lead_qualifications.id"), index=True)
+    provider_key: Mapped[str] = mapped_column(String(100))
+    provider_contact_reference: Mapped[str | None] = mapped_column(String(255))
+    first_name: Mapped[str | None] = mapped_column(String(100))
+    last_name: Mapped[str | None] = mapped_column(String(100))
+    full_name: Mapped[str | None] = mapped_column(String(220))
+    job_title: Mapped[str | None] = mapped_column(String(200))
+    department: Mapped[str | None] = mapped_column(String(100))
+    seniority: Mapped[str | None] = mapped_column(String(100))
+    normalized_buyer_role: Mapped[str] = mapped_column(String(200))
+    buyer_role_match: Mapped[BuyerRoleMatch] = mapped_column(
+        Enum(BuyerRoleMatch, native_enum=False)
+    )
+    buyer_role_match_reason: Mapped[str] = mapped_column(String(255))
+    confidence: Mapped[int | None] = mapped_column(Integer)
+    discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    classification: Mapped[DataClassification] = mapped_column(
+        Enum(DataClassification, native_enum=False)
+    )
+    redistribution_status: Mapped[RedistributionStatus] = mapped_column(
+        Enum(RedistributionStatus, native_enum=False)
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    channels: Mapped[list[ContactEmail]] = relationship(cascade="all, delete-orphan")
+
+
+class ContactEmail(Base):
+    __tablename__ = "contact_emails"
+    __table_args__ = (UniqueConstraint("contact_id", "email"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    contact_id: Mapped[str] = mapped_column(
+        ForeignKey("contact_candidates.id", ondelete="CASCADE"), index=True
+    )
+    email: Mapped[str] = mapped_column(String(320))
+    email_type: Mapped[str] = mapped_column(String(30), default="BUSINESS")
+    source_provider: Mapped[str] = mapped_column(String(100))
+    verification_status: Mapped[EmailVerificationStatus] = mapped_column(
+        Enum(EmailVerificationStatus, native_enum=False), default=EmailVerificationStatus.UNKNOWN
+    )
+    verification_score: Mapped[int | None] = mapped_column(Integer)
+    found_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    classification: Mapped[DataClassification] = mapped_column(
+        Enum(DataClassification, native_enum=False)
+    )
+    redistribution_status: Mapped[RedistributionStatus] = mapped_column(
+        Enum(RedistributionStatus, native_enum=False)
+    )
 
 
 class CompanyFact(Base):

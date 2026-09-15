@@ -174,6 +174,24 @@ class QualificationRequest(Schema):
     fit_assessment_id: str
 
 
+class ContactDiscoveryRequest(Schema):
+    qualification_id: str
+    provider: str = Field(default="HUNTER", pattern=r"^[A-Z0-9_]+$", max_length=50)
+    max_results: int = Field(default=10, ge=1, le=25)
+    force_refresh: bool = False
+
+
+class ContactProviderRequest(Schema):
+    provider: str = Field(default="HUNTER", pattern=r"^[A-Z0-9_]+$", max_length=50)
+    force_refresh: bool = False
+
+
+class VerifyEmailRequest(ContactProviderRequest):
+    email: str | None = Field(
+        default=None, min_length=3, max_length=320, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+    )
+
+
 class EvaluateAllProductsRequest(Schema):
     product_id: str | None = None
 
