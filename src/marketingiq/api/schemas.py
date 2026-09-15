@@ -1,8 +1,14 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from marketingiq.domain.models import MembershipRole, ProductStatus
+from marketingiq.domain.models import (
+    DataClassification,
+    MembershipRole,
+    ProductStatus,
+    RedistributionStatus,
+)
 
 
 class Schema(BaseModel):
@@ -88,8 +94,16 @@ class ICPResponse(ICPWrite):
 
 
 class CompanyAttach(Schema):
-    domain: str = Field(pattern=r"^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$", max_length=253)
+    domain: str = Field(min_length=1, max_length=2048)
     canonical_name: str = Field(min_length=1, max_length=255)
+    website_url: str | None = None
+    country_code: str | None = None
+    industry: str | None = None
+    employee_min: int | None = Field(default=None, ge=0)
+    employee_max: int | None = Field(default=None, ge=0)
+    description: str | None = None
+    lifecycle_status: str | None = None
+    private_notes: str | None = None
 
 
 class CompanyRelationshipUpdate(Schema):
@@ -106,3 +120,34 @@ class CompanyResponse(CompanyRelationshipUpdate):
     id: str
     organization_id: str
     company: CompanyIdentity
+
+
+class EvidenceWrite(Schema):
+    data_source_id: str | None = None
+    reference_url: str | None = None
+    reference_text: str | None = None
+    retrieved_at: datetime | None = None
+    last_verified_at: datetime | None = None
+
+
+class CompanyFactWrite(Schema):
+    fact_key: str = Field(min_length=1, max_length=100)
+    value: Any
+    classification: DataClassification
+    redistribution_status: RedistributionStatus | None = None
+    confidence: int = Field(ge=0, le=100)
+    observed_at: datetime | None = None
+    valid_until: datetime | None = None
+    model_version: str | None = None
+    research_run_id: str | None = None
+    evidence: list[EvidenceWrite] = Field(default_factory=list)
+
+
+class DataSourceWrite(Schema):
+    provider_key: str
+    display_name: str
+    external_reference: str | None = None
+
+
+class CsvImport(Schema):
+    content: str

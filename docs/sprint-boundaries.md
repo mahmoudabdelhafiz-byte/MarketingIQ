@@ -6,9 +6,13 @@ Relational tenancy and RBAC foundations, tenant/global company separation, produ
 ICP catalogs, append-only facts/evidence, provider ports, migrations, development seed data,
 audit model and architecture/security documentation.
 
+Task 3 adds `CompanyService`, strict domain normalization, safe `MANUAL`/`CSV` sources,
+tenant-visible facts and evidence, duplicate-domain reuse, synchronous CSV preview/import,
+import-specific RBAC, mutation audit logging, authenticated routes, tests, and operator docs.
+
 ## Intentionally deferred
 
-- Web framework, authentication endpoints and user interface
+- User interface
 - Contacts, leads, campaigns, opportunities and outreach tracking
 - Provider implementations (including Hunter, Apollo, Clay and Instantly)
 - AI agents, automated company discovery and qualification/scoring engines
@@ -38,5 +42,5 @@ repository. Their execution status must be taken from the latest local run and C
 committing a test does not establish a pass. In environments without `TEST_DATABASE_URL`, the
 PostgreSQL suite reports skips.
 
-Still deferred: CSV import, external providers, AI research, lead scoring, campaign generation,
+Still deferred: external providers, AI research, lead scoring, campaign generation,
 automated outreach, billing, a commercial API, a frontend application, and production deployment.
