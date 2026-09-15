@@ -36,3 +36,5 @@ jobs:
       - run: ruff check .
       - run: python -m compileall -q src tests
       - run: pytest -q
+      - name: Verify Alembic upgrade on PostgreSQL
+        run: DATABASE_URL="$TEST_DATABASE_URL" alembic upgrade head
