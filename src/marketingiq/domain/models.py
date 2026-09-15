@@ -56,6 +56,13 @@ class RedistributionStatus(enum.StrEnum):
     INTERNAL_ONLY = "INTERNAL_ONLY"
 
 
+class ReviewAction(enum.StrEnum):
+    APPROVE = "APPROVE"
+    SELECT = "SELECT"
+    MANUAL_CORRECTION = "MANUAL_CORRECTION"
+    RESOLVE_CONFLICT = "RESOLVE_CONFLICT"
+
+
 class MembershipRole(enum.StrEnum):
     ORGANIZATION_ADMIN = "ORGANIZATION_ADMIN"
     MARKETING_USER = "MARKETING_USER"
@@ -326,10 +333,16 @@ class HumanOverride(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
     company_fact_id: Mapped[str] = mapped_column(ForeignKey("company_facts.id"))
+    fact_key: Mapped[str] = mapped_column(String(150), index=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    action: Mapped[ReviewAction] = mapped_column(
+        Enum(ReviewAction, native_enum=False, validate_strings=True, create_constraint=True)
+    )
     replacement_value: Mapped[Any] = mapped_column(JSON)
     reason: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
 
 
 class AuditLog(Base):

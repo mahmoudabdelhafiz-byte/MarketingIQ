@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -9,6 +9,7 @@ from marketingiq.domain.models import (
     ProductStatus,
     RedistributionStatus,
     ResearchMode,
+    ReviewAction,
 )
 
 
@@ -158,3 +159,12 @@ class ResearchRequest(Schema):
     mode: ResearchMode = ResearchMode.PUBLIC_ONLY
     providers: list[str] = Field(default_factory=list, max_length=10)
     force_refresh: bool = False
+
+
+class IntelligenceReview(Schema):
+    action: ReviewAction | Literal["REVOKE"]
+    selected_fact_id: str | None = None
+    value: Any = None
+    confidence: int = Field(default=100, ge=0, le=100)
+    note: str = Field(default="", max_length=10000)
+    evidence_url: str | None = None
