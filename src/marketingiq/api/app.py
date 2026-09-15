@@ -18,6 +18,7 @@ from marketingiq.api.schemas import (
     DataSourceWrite,
     ICPResponse,
     ICPWrite,
+    IntelligenceReview,
     LoginRequest,
     MeResponse,
     ProductResponse,
@@ -29,9 +30,10 @@ from marketingiq.application.auth import authenticate, create_access_token, deco
 from marketingiq.application.catalog import CatalogService
 from marketingiq.application.companies import CompanyService, EvidenceInput, FactInput, ImportReport
 from marketingiq.application.errors import AuthorizationError, ConflictError, NotFoundError
+from marketingiq.application.intelligence import IntelligenceService, ReviewRequest
 from marketingiq.application.research import CompanyResearchService, ProviderRegistry
 from marketingiq.application.tenant import TenantContext
-from marketingiq.domain.models import OrganizationMembership, User
+from marketingiq.domain.models import OrganizationMembership, ReviewAction, User
 from marketingiq.infrastructure.database import create_database_engine, create_session_factory
 from marketingiq.infrastructure.providers import HunterProvider, PublicWebProvider
 
@@ -102,6 +104,11 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
         context: TenantContext = Depends(tenant), db: Session = Depends(session)
     ) -> CompanyResearchService:
         return CompanyResearchService(db, context, app.state.provider_registry)
+
+    def intelligence_service(
+        context: TenantContext = Depends(tenant), db: Session = Depends(session)
+    ) -> IntelligenceService:
+        return IntelligenceService(db, context)
 
     @app.exception_handler(NotFoundError)
     async def not_found(_request, error):
@@ -219,6 +226,44 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
     @app.get(prefix + "/companies/{relationship_id}/facts")
     def facts(relationship_id: str, svc: CompanyService = Depends(company_service)):
         return [_fact_output(item) for item in svc.list_facts(relationship_id)]
+
+    @app.get(prefix + "/companies/{relationship_id}/intelligence")
+    def intelligence(
+        relationship_id: str, svc: IntelligenceService = Depends(intelligence_service)
+    ):
+        return svc.list(relationship_id)
+
+    @app.get(prefix + "/companies/{relationship_id}/intelligence/{fact_key}")
+    def intelligence_fact(
+        relationship_id: str,
+        fact_key: str,
+        svc: IntelligenceService = Depends(intelligence_service),
+    ):
+        return svc.get(relationship_id, fact_key)
+
+    @app.post(prefix + "/companies/{relationship_id}/intelligence/{fact_key}/review")
+    def review_intelligence_fact(
+        relationship_id: str,
+        fact_key: str,
+        body: IntelligenceReview,
+        svc: IntelligenceService = Depends(intelligence_service),
+    ):
+        if body.action == "REVOKE":
+            return svc.revoke(relationship_id, fact_key, body.note)
+        try:
+            action = ReviewAction(body.action)
+        except ValueError:
+            raise ValueError("unsupported review action") from None
+        values = body.model_dump(exclude={"action"})
+        return svc.review(relationship_id, fact_key, ReviewRequest(action=action, **values))
+
+    @app.get(prefix + "/companies/{relationship_id}/fact-history/{fact_key}")
+    def fact_history(
+        relationship_id: str,
+        fact_key: str,
+        svc: IntelligenceService = Depends(intelligence_service),
+    ):
+        return [_fact_output(item) for item in svc.history(relationship_id, fact_key)]
 
     @app.post(prefix + "/companies/{relationship_id}/facts", status_code=201)
     def add_fact(
