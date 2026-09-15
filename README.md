@@ -2,7 +2,8 @@
 
 MarketingIQ is a multi-tenant B2B marketing-intelligence platform intended to turn
 company evidence, product fit, buyer-role and campaign outcomes into reusable intelligence.
-This repository currently contains **Sprint 1 foundation only**, not a runnable web product.
+This repository contains the Sprint 1 company repository and an internal FastAPI adapter. It is
+not a public/commercial API and does not perform automated research or provider enrichment.
 
 ## Stack
 
@@ -24,6 +25,17 @@ pytest
 ruff check .
 ```
 
+Start the internal API after configuring `DATABASE_URL`:
+
+```bash
+fastapi run marketingiq.api.app:app
+```
+
+Requests use the selected organization in the route and the authenticated actor ID in the
+`X-User-ID` header. This header is an adapter seam for the future authentication middleware,
+not a production authentication mechanism. Every use case still verifies database membership
+and role before reading or writing tenant data.
+
 No secret or provider key belongs in Git. Development reads environment variables; hosted
 environments should inject secrets from their native secret manager with separate credentials
 per environment. Database roles should have only application-schema privileges.
@@ -33,6 +45,7 @@ per environment. Database roles should have only application-schema privileges.
 - [Architecture, tenancy, provenance and security](docs/architecture.md)
 - [Development workflow](docs/development-workflow.md)
 - [Sprint boundaries](docs/sprint-boundaries.md)
+- [Company repository and CSV import](docs/company-repository.md)
 - [ADR 0001: modular monolith and shared company identity](docs/adr/0001-foundation.md)
 
 ## Seed data

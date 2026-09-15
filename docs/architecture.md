@@ -7,8 +7,9 @@ MarketingIQ is an API-ready modular monolith:
 - `domain` defines relational entities, controlled vocabularies and provider ports.
 - `application` owns use cases and requires an explicit `TenantContext` for private records.
 - `infrastructure` owns database configuration, seed helpers and later provider adapters.
-- Future UI, REST handlers and background workers call application services rather than models
-  or provider SDKs directly.
+- Internal REST handlers and future UI/background workers call application services rather than
+  models or provider SDKs directly. `CompanyService` is the tenant-scoped company, provenance,
+  and synchronous import use-case boundary.
 
 PostgreSQL is the production system of record. Background work can initially use a database
 outbox/job table and a separate worker process from the same codebase; select a queue only when
@@ -27,7 +28,8 @@ organizations. Future repositories must follow the same rule, and integration te
 cross-tenant denial. PostgreSQL row-level security is recommended as defense in depth once the
 request/session transaction lifecycle exists; application scoping remains mandatory.
 
-Global facts have a null `organization_id`. Customer-provided or tenant-derived private facts
+Global facts have a null `organization_id`. The internal tenant API only creates tenant-owned
+facts; global publication is intentionally unavailable. Customer-provided or tenant-derived private facts
 carry an organization and must never be promoted to a global record implicitly. A later,
 audited publication use case may promote eligible derived facts after licensing and privacy
 checks. Global identity fields should contain only conservative, verified identity data;
@@ -78,10 +80,19 @@ or API credential is implemented in Sprint 1.
 - Production connections require TLS, least-privilege database roles, encrypted backups and
   tenant-aware restore/access procedures.
 
+## Internal API
+
+The `/api/v1/organizations/{organization_id}` routes list, attach and update company
+relationships; list and append facts/evidence; manage safe `MANUAL`/`CSV` sources; and preview
+or execute CSV imports. Authorization resolves the actor's membership for the organization on
+every service call. Read-only membership may read; Marketing Users may manually attach companies,
+update relationships, create sources and append facts; only Organization Admins may import.
+
 ## Initial and future domain
 
 Implemented: Organization, User, OrganizationMembership, Product and normalized criteria, ICP
 and normalized criteria, Company, CompanyIdentifier, OrganizationCompany, CompanyFact, Evidence,
-DataSource, ResearchRun, HumanOverride and AuditLog. Contacts, Leads, Campaigns and Opportunities
+DataSource, ResearchRun, HumanOverride and AuditLog. The company application service and internal
+HTTP routes now make this slice usable. Contacts, Leads, Campaigns and Opportunities
 will be tenant-owned aggregates linked to the global company identity; they are intentionally
 documented rather than prematurely implemented.

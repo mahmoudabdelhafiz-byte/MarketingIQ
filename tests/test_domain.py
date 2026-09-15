@@ -101,9 +101,7 @@ def test_disagreeing_facts_and_evidence_are_preserved_as_history(session):
     session.add_all([company, source])
     session.flush()
     first.company_id = company.id
-    first.evidences.append(
-        Evidence(source=source, reference_url="https://example.test/locations")
-    )
+    first.evidences.append(Evidence(source=source, reference_url="https://example.test/locations"))
     second = CompanyFact(
         company_id=company.id,
         fact_key="multiple_operating_locations",
