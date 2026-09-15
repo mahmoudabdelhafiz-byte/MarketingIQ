@@ -14,9 +14,10 @@ MarketingIQ is an API-ready modular monolith:
 synchronous CSV imports. The authenticated internal API derives its `TenantContext` from the JWT
 actor and organization membership; it never trusts an actor identifier supplied in a header.
 
-PostgreSQL is the production system of record. Background work can initially use a database
-outbox/job table and a separate worker process from the same codebase; select a queue only when
-load and delivery semantics are known. A public API is deliberately not implemented yet.
+MySQL 8 is the production system of record for the initial shared-hosting deployment. Background
+work can initially use a database outbox/job table and a separate worker process from the same
+codebase; select a queue only when load and delivery semantics are known. A public API is
+deliberately not implemented yet.
 
 ## Multi-tenancy and company identity
 
@@ -25,11 +26,12 @@ unique, allowing safe reuse without duplicating identity. `OrganizationCompany` 
 tenant-owned relationship containing lifecycle and private notes. Products, ICPs, memberships,
 overrides, audit events and tenant research are explicitly keyed by `organization_id`.
 
-Application access to tenant-owned data goes through `TenantRepository`, constructed with a
-non-empty tenant context; its reads always add the tenant predicate and writes reject mismatched
+Application access to tenant-owned data goes through tenant-scoped services/repositories built
+with a non-empty tenant context; reads add the tenant predicate and writes reject mismatched
 organizations. Future repositories must follow the same rule, and integration tests must prove
-cross-tenant denial. PostgreSQL row-level security is recommended as defense in depth once the
-request/session transaction lifecycle exists; application scoping remains mandatory.
+cross-tenant denial. MySQL does not provide PostgreSQL-style row-level security, so application
+scoping, RBAC, least-privilege database credentials, auditability and tenant-isolation tests are
+mandatory rather than optional defense in depth.
 
 Global facts have a null `organization_id`. Customer-provided or tenant-derived private facts
 carry an organization and must never be promoted to a global record implicitly. A later,
@@ -79,8 +81,8 @@ or API credential is implemented in Sprint 1.
 - Identifiers, uniqueness, foreign keys and confidence ranges have database constraints.
 - Secrets come from environment/secret management. Provider payloads and credentials must not
   be logged. Audit logs record actor, tenant, action and target without secret values.
-- Production connections require TLS, least-privilege database roles, encrypted backups and
-  tenant-aware restore/access procedures.
+- Production MySQL connections require TLS when the hosting provider supports it, least-privilege
+  database users, encrypted backups and tenant-aware restore/access procedures.
 
 ## Initial and future domain
 

@@ -15,13 +15,13 @@ from marketingiq.domain.models import (
     User,
 )
 
-pytestmark = pytest.mark.postgresql
+pytestmark = pytest.mark.mysql
 SECRET = "a-secure-test-secret-that-is-long-enough"
 PASSWORD = "correct horse battery"
 
 
 @pytest.fixture
-def postgresql_api():
+def mysql_api():
     url = os.environ.get("TEST_DATABASE_URL")
     if not url:
         pytest.skip("TEST_DATABASE_URL is not configured")
@@ -74,8 +74,8 @@ def headers(client, email):
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
-def test_postgresql_tenant_isolation_and_role_matrix(postgresql_api):
-    client, (org_a, org_b) = postgresql_api
+def test_mysql_tenant_isolation_and_role_matrix(mysql_api):
+    client, (org_a, org_b) = mysql_api
     admin, marketer = (
         headers(client, "admin@example.test"),
         headers(client, "marketer@example.test"),
