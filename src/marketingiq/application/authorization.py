@@ -12,12 +12,18 @@ class Permission(StrEnum):
     RUN_PUBLIC_RESEARCH = "RUN_PUBLIC_RESEARCH"
     RUN_EXTERNAL_RESEARCH = "RUN_EXTERNAL_RESEARCH"
     REVIEW_INTELLIGENCE = "REVIEW_INTELLIGENCE"
+    RUN_FIT_ASSESSMENT = "RUN_FIT_ASSESSMENT"
 
 
 ROLE_PERMISSIONS = {
     MembershipRole.ORGANIZATION_ADMIN: frozenset(Permission),
     MembershipRole.MARKETING_USER: frozenset(
-        {Permission.READ, Permission.WRITE_CATALOG, Permission.RUN_PUBLIC_RESEARCH}
+        {
+            Permission.READ,
+            Permission.WRITE_CATALOG,
+            Permission.RUN_PUBLIC_RESEARCH,
+            Permission.RUN_FIT_ASSESSMENT,
+        }
     ),
     MembershipRole.READ_ONLY: frozenset({Permission.READ}),
 }

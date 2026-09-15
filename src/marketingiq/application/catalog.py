@@ -25,6 +25,8 @@ from marketingiq.domain.models import (
 class CriterionData:
     kind: str
     value: str
+    weight: int = 3
+    required: bool = False
 
 
 def normalize_criteria(
@@ -37,7 +39,12 @@ def normalize_criteria(
             normalized.append(criterion)
         else:
             normalized.append(
-                CriterionData(kind=str(criterion["kind"]), value=str(criterion["value"]))
+                CriterionData(
+                    kind=str(criterion["kind"]),
+                    value=str(criterion["value"]),
+                    weight=int(criterion.get("weight", 3)),
+                    required=bool(criterion.get("required", False)),
+                )
             )
     return normalized
 
@@ -169,7 +176,10 @@ class CatalogService:
         self.get_product(product_id)
         criteria = normalize_criteria(data.pop("criteria", []))
         icp = ICP(organization_id=self.tenant.organization_id, product_id=product_id, **data)
-        icp.criteria = [ICPCriterion(kind=x.kind, value=x.value) for x in criteria]
+        icp.criteria = [
+            ICPCriterion(kind=x.kind, value=x.value, weight=x.weight, required=x.required)
+            for x in criteria
+        ]
         self.session.add(icp)
         self._flush()
         _audit(self.session, self.tenant, "icp.created", icp)
@@ -182,7 +192,10 @@ class CatalogService:
         old = self.get_icp(icp_id)
         old.is_active = False
         criteria = normalize_criteria(
-            data.pop("criteria", [CriterionData(x.kind, x.value) for x in old.criteria])
+            data.pop(
+                "criteria",
+                [CriterionData(x.kind, x.value, x.weight, x.required) for x in old.criteria],
+            )
         )
         values = {k: data.pop(k, getattr(old, k)) for k in ("name", "employee_min", "employee_max")}
         revision = ICP(
@@ -192,7 +205,10 @@ class CatalogService:
             is_active=data.pop("is_active", True),
             **values,
         )
-        revision.criteria = [ICPCriterion(kind=x.kind, value=x.value) for x in criteria]
+        revision.criteria = [
+            ICPCriterion(kind=x.kind, value=x.value, weight=x.weight, required=x.required)
+            for x in criteria
+        ]
         self.session.add(revision)
         self._flush()
         _audit(self.session, self.tenant, "icp.revised", revision)

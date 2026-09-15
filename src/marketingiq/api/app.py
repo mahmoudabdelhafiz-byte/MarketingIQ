@@ -16,6 +16,8 @@ from marketingiq.api.schemas import (
     CompanyRelationshipUpdate,
     CsvImport,
     DataSourceWrite,
+    EvaluateAllProductsRequest,
+    FitAssessmentRequest,
     ICPResponse,
     ICPWrite,
     IntelligenceReview,
@@ -30,6 +32,7 @@ from marketingiq.application.auth import authenticate, create_access_token, deco
 from marketingiq.application.catalog import CatalogService
 from marketingiq.application.companies import CompanyService, EvidenceInput, FactInput, ImportReport
 from marketingiq.application.errors import AuthorizationError, ConflictError, NotFoundError
+from marketingiq.application.fit import FitAssessmentService
 from marketingiq.application.intelligence import IntelligenceService, ReviewRequest
 from marketingiq.application.research import CompanyResearchService, ProviderRegistry
 from marketingiq.application.tenant import TenantContext
@@ -109,6 +112,11 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
         context: TenantContext = Depends(tenant), db: Session = Depends(session)
     ) -> IntelligenceService:
         return IntelligenceService(db, context)
+
+    def fit_service(
+        context: TenantContext = Depends(tenant), db: Session = Depends(session)
+    ) -> FitAssessmentService:
+        return FitAssessmentService(db, context)
 
     @app.exception_handler(NotFoundError)
     async def not_found(_request, error):
@@ -265,6 +273,38 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
     ):
         return [_fact_output(item) for item in svc.history(relationship_id, fact_key)]
 
+    fit_prefix = prefix + "/companies/{relationship_id}/fit-assessments"
+
+    @app.post(fit_prefix, status_code=201)
+    def assess_fit(
+        relationship_id: str,
+        body: FitAssessmentRequest,
+        svc: FitAssessmentService = Depends(fit_service),
+    ):
+        return _assessment_output(svc.evaluate(relationship_id, body.product_id, body.icp_id))
+
+    @app.get(fit_prefix)
+    def fit_history(relationship_id: str, svc: FitAssessmentService = Depends(fit_service)):
+        return [_assessment_output(item) for item in svc.list(relationship_id)]
+
+    @app.post(fit_prefix + "/evaluate-all-products", status_code=201)
+    def assess_all_products(
+        relationship_id: str,
+        body: EvaluateAllProductsRequest,
+        svc: FitAssessmentService = Depends(fit_service),
+    ):
+        return [
+            _assessment_output(item) for item in svc.evaluate_all(relationship_id, body.product_id)
+        ]
+
+    @app.get(fit_prefix + "/{assessment_id}")
+    def fit_assessment(
+        relationship_id: str,
+        assessment_id: str,
+        svc: FitAssessmentService = Depends(fit_service),
+    ):
+        return _assessment_output(svc.get(relationship_id, assessment_id))
+
     @app.post(prefix + "/companies/{relationship_id}/facts", status_code=201)
     def add_fact(
         relationship_id: str,
@@ -407,4 +447,27 @@ def _run_output(run) -> dict[str, Any]:
         "providers_succeeded": run.providers_succeeded,
         "error_summary": run.error_summary,
         "workflow_version": run.workflow_version,
+    }
+
+
+def _assessment_output(item) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "organization_id": item.organization_id,
+        "company_id": item.company_id,
+        "organization_company_id": item.organization_company_id,
+        "product_id": item.product_id,
+        "icp_id": item.icp_id,
+        "icp_version": item.icp_version,
+        "fit_score": item.score,
+        "evidence_coverage": item.evidence_coverage,
+        "confidence": item.confidence,
+        "grade": item.grade,
+        "status": item.status,
+        "evaluated_at": item.evaluated_at,
+        "workflow_version": item.workflow_version,
+        "evidence_snapshot": item.evidence_snapshot,
+        "explanation": item.explanation,
+        "classification": item.classification,
+        "created_by_user_id": item.created_by_user_id,
     }
