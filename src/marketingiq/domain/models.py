@@ -89,6 +89,22 @@ class ResearchMode(enum.StrEnum):
     EXTERNAL_ONLY = "EXTERNAL_ONLY"
 
 
+class FitGrade(enum.StrEnum):
+    A = "A"
+    B = "B"
+    C = "C"
+    D = "D"
+    UNKNOWN = "UNKNOWN"
+
+
+class FitStatus(enum.StrEnum):
+    COMPLETE = "COMPLETE"
+    PARTIAL = "PARTIAL"
+    NEEDS_MORE_RESEARCH = "NEEDS_MORE_RESEARCH"
+    CONFLICTED = "CONFLICTED"
+    STALE = "STALE"
+
+
 class Organization(Base, TimestampMixin):
     __tablename__ = "organizations"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -182,6 +198,8 @@ class ICPCriterion(Base):
     icp_id: Mapped[str] = mapped_column(ForeignKey("icps.id", ondelete="CASCADE"))
     kind: Mapped[str] = mapped_column(String(40))
     value: Mapped[str] = mapped_column(Text)
+    weight: Mapped[int] = mapped_column(Integer, default=3)
+    required: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Company(Base, TimestampMixin):
@@ -225,6 +243,51 @@ class OrganizationCompany(Base, TimestampMixin):
     private_notes: Mapped[str | None] = mapped_column(Text)
     organization: Mapped[Organization] = relationship()
     company: Mapped[Company] = relationship()
+
+
+class ProductFitAssessment(Base):
+    """Immutable, versioned result built from a safe current-best fact snapshot."""
+
+    __tablename__ = "product_fit_assessments"
+    __table_args__ = (
+        CheckConstraint("score >= 0 AND score <= 100", name="ck_fit_score"),
+        CheckConstraint(
+            "evidence_coverage >= 0 AND evidence_coverage <= 100", name="ck_fit_coverage"
+        ),
+        Index(
+            "ix_fit_tenant_relationship_time",
+            "organization_id",
+            "organization_company_id",
+            "evaluated_at",
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), index=True)
+    organization_company_id: Mapped[str] = mapped_column(
+        ForeignKey("organization_companies.id"), index=True
+    )
+    product_id: Mapped[str] = mapped_column(ForeignKey("products.id"), index=True)
+    icp_id: Mapped[str] = mapped_column(ForeignKey("icps.id"), index=True)
+    icp_version: Mapped[int] = mapped_column(Integer)
+    score: Mapped[int] = mapped_column(Integer)
+    evidence_coverage: Mapped[int] = mapped_column(Integer)
+    confidence: Mapped[str] = mapped_column(String(20))
+    grade: Mapped[FitGrade] = mapped_column(
+        Enum(FitGrade, native_enum=False, validate_strings=True, create_constraint=True)
+    )
+    status: Mapped[FitStatus] = mapped_column(
+        Enum(FitStatus, native_enum=False, validate_strings=True, create_constraint=True)
+    )
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    workflow_version: Mapped[str] = mapped_column(String(100))
+    evidence_snapshot: Mapped[Any] = mapped_column(JSON)
+    explanation: Mapped[Any] = mapped_column(JSON)
+    classification: Mapped[DataClassification] = mapped_column(
+        Enum(DataClassification, native_enum=False, validate_strings=True, create_constraint=True),
+        default=DataClassification.MARKETINGIQ_DERIVED,
+    )
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
 
 
 class DataSource(Base, TimestampMixin):

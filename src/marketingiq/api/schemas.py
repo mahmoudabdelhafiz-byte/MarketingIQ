@@ -42,6 +42,8 @@ class MeResponse(Schema):
 class Criterion(Schema):
     kind: str = Field(min_length=1, max_length=40)
     value: str = Field(min_length=1, max_length=2000)
+    weight: int = Field(default=3, ge=1, le=100)
+    required: bool = False
 
 
 class ProductWrite(Schema):
@@ -159,6 +161,15 @@ class ResearchRequest(Schema):
     mode: ResearchMode = ResearchMode.PUBLIC_ONLY
     providers: list[str] = Field(default_factory=list, max_length=10)
     force_refresh: bool = False
+
+
+class FitAssessmentRequest(Schema):
+    product_id: str
+    icp_id: str
+
+
+class EvaluateAllProductsRequest(Schema):
+    product_id: str | None = None
 
 
 class IntelligenceReview(Schema):
