@@ -14,6 +14,8 @@ from marketingiq.api.schemas import (
     CompanyAttach,
     CompanyFactWrite,
     CompanyRelationshipUpdate,
+    ContactDiscoveryRequest,
+    ContactProviderRequest,
     CsvImport,
     DataSourceWrite,
     EvaluateAllProductsRequest,
@@ -28,10 +30,12 @@ from marketingiq.api.schemas import (
     QualificationRequest,
     ResearchRequest,
     TokenResponse,
+    VerifyEmailRequest,
 )
 from marketingiq.application.auth import authenticate, create_access_token, decode_access_token
 from marketingiq.application.catalog import CatalogService
 from marketingiq.application.companies import CompanyService, EvidenceInput, FactInput, ImportReport
+from marketingiq.application.contacts import ContactDiscoveryService
 from marketingiq.application.errors import AuthorizationError, ConflictError, NotFoundError
 from marketingiq.application.fit import FitAssessmentService
 from marketingiq.application.fit_freshness import FitAssessmentFreshnessService
@@ -130,6 +134,9 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
         context: TenantContext = Depends(tenant), db: Session = Depends(session)
     ) -> LeadQualificationService:
         return LeadQualificationService(db, context)
+
+    def contact_service(context: TenantContext = Depends(tenant), db: Session = Depends(session)):
+        return ContactDiscoveryService(db, context, app.state.provider_registry)
 
     @app.exception_handler(NotFoundError)
     async def not_found(_request, error):
@@ -372,6 +379,61 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
     ):
         return _qualification_output(svc.reevaluate(relationship_id, qualification_id))
 
+    contact_prefix = prefix + "/companies/{relationship_id}/contacts"
+
+    @app.post(contact_prefix + "/discover", status_code=201)
+    def discover_contacts(
+        relationship_id: str,
+        body: ContactDiscoveryRequest,
+        svc: ContactDiscoveryService = Depends(contact_service),
+    ):
+        return [
+            _contact_output(x)
+            for x in svc.discover(
+                relationship_id,
+                body.qualification_id,
+                body.provider,
+                body.max_results,
+                body.force_refresh,
+            )
+        ]
+
+    @app.get(contact_prefix)
+    def contacts(relationship_id: str, svc: ContactDiscoveryService = Depends(contact_service)):
+        return [_contact_output(x) for x in svc.list(relationship_id)]
+
+    @app.get(contact_prefix + "/{contact_id}")
+    def contact(
+        relationship_id: str,
+        contact_id: str,
+        svc: ContactDiscoveryService = Depends(contact_service),
+    ):
+        return _contact_output(svc.get(relationship_id, contact_id))
+
+    @app.post(contact_prefix + "/{contact_id}/find-email")
+    def find_contact_email(
+        relationship_id: str,
+        contact_id: str,
+        body: ContactProviderRequest,
+        svc: ContactDiscoveryService = Depends(contact_service),
+    ):
+        return _contact_output(
+            svc.find_email(relationship_id, contact_id, body.provider, body.force_refresh)
+        )
+
+    @app.post(contact_prefix + "/{contact_id}/verify-email")
+    def verify_contact_email(
+        relationship_id: str,
+        contact_id: str,
+        body: VerifyEmailRequest,
+        svc: ContactDiscoveryService = Depends(contact_service),
+    ):
+        return _contact_output(
+            svc.verify_email(
+                relationship_id, contact_id, body.email, body.provider, body.force_refresh
+            )
+        )
+
     @app.post(prefix + "/companies/{relationship_id}/facts", status_code=201)
     def add_fact(
         relationship_id: str,
@@ -565,4 +627,44 @@ def _qualification_output(item) -> dict[str, Any]:
         "qualified_at": item.qualified_at,
         "classification": item.classification,
         "created_by_user_id": item.created_by_user_id,
+    }
+
+
+def _contact_output(item) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "organization_id": item.organization_id,
+        "organization_company_id": item.organization_company_id,
+        "company_id": item.company_id,
+        "qualification_id": item.qualification_id,
+        "provider_key": item.provider_key,
+        "first_name": item.first_name,
+        "last_name": item.last_name,
+        "full_name": item.full_name,
+        "job_title": item.job_title,
+        "department": item.department,
+        "seniority": item.seniority,
+        "normalized_buyer_role": item.normalized_buyer_role,
+        "buyer_role_match": item.buyer_role_match,
+        "buyer_role_match_reason": item.buyer_role_match_reason,
+        "confidence": item.confidence,
+        "discovered_at": item.discovered_at,
+        "last_verified_at": item.last_verified_at,
+        "classification": item.classification,
+        "redistribution_status": item.redistribution_status,
+        "emails": [
+            {
+                "id": x.id,
+                "email": x.email,
+                "email_type": x.email_type,
+                "source_provider": x.source_provider,
+                "verification_status": x.verification_status,
+                "verification_score": x.verification_score,
+                "found_at": x.found_at,
+                "verified_at": x.verified_at,
+                "classification": x.classification,
+                "redistribution_status": x.redistribution_status,
+            }
+            for x in item.channels
+        ],
     }

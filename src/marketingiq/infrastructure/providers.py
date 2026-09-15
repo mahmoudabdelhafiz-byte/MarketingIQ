@@ -12,9 +12,13 @@ import httpx
 
 from marketingiq.domain.models import DataClassification, RedistributionStatus
 from marketingiq.domain.providers import (
+    ContactProviderResult,
+    ProviderAuthenticationError,
     ProviderCapability,
+    ProviderContact,
     ProviderError,
     ProviderFact,
+    ProviderMalformedResponse,
     ProviderNotConfigured,
     ProviderRateLimited,
     ProviderResult,
@@ -196,7 +200,14 @@ class PublicWebProvider:
 
 class HunterProvider:
     key = "HUNTER"
-    capabilities = frozenset({ProviderCapability.ENRICH_COMPANY})
+    capabilities = frozenset(
+        {
+            ProviderCapability.ENRICH_COMPANY,
+            ProviderCapability.SEARCH_CONTACTS,
+            ProviderCapability.FIND_EMAIL,
+            ProviderCapability.VERIFY_EMAIL,
+        }
+    )
     costs_credits = True
 
     def __init__(self, api_key: str | None = None, client: httpx.Client | None = None) -> None:
@@ -252,3 +263,86 @@ class HunterProvider:
             credits_used=meta.get("params", {}).get("credits_used"),
             credits_remaining=meta.get("credits", {}).get("available"),
         )
+
+    def _request(self, path: str, params: dict) -> tuple[dict, object]:
+        if not self.configured:
+            raise ProviderNotConfigured("Hunter is not configured")
+        try:
+            response = (self.client or httpx.Client(timeout=10)).get(
+                f"https://api.hunter.io/v2/{path}", params={**params, "api_key": self._api_key}
+            )
+        except httpx.HTTPError as error:
+            raise ProviderError("Hunter request failed") from error
+        if response.status_code == 429:
+            raise ProviderRateLimited("Hunter rate limit reached")
+        if response.status_code in {401, 403}:
+            raise ProviderAuthenticationError("Hunter authentication failed")
+        if response.status_code >= 400:
+            raise ProviderError(f"Hunter request failed with HTTP {response.status_code}")
+        try:
+            payload = response.json()
+        except ValueError as error:
+            raise ProviderMalformedResponse("Hunter returned an invalid response") from error
+        if not isinstance(payload, dict) or not isinstance(payload.get("data", {}), (dict, list)):
+            raise ProviderMalformedResponse("Hunter returned a malformed response")
+        return payload, response
+
+    @staticmethod
+    def _contact(item: dict) -> ProviderContact:
+        if not isinstance(item, dict):
+            raise ProviderMalformedResponse("Hunter returned a malformed contact")
+        first, last = item.get("first_name"), item.get("last_name")
+        return ProviderContact(
+            reference=str(item.get("id")) if item.get("id") is not None else None,
+            first_name=first,
+            last_name=last,
+            full_name=" ".join(x for x in (first, last) if x) or None,
+            job_title=item.get("position"),
+            department=item.get("department"),
+            seniority=item.get("seniority"),
+            email=item.get("value"),
+            confidence=item.get("confidence") if isinstance(item.get("confidence"), int) else None,
+        )
+
+    @staticmethod
+    def _result(
+        payload: dict, response, contacts: tuple[ProviderContact, ...]
+    ) -> ContactProviderResult:
+        meta = payload.get("meta") or {}
+        return ContactProviderResult(
+            "HUNTER",
+            contacts,
+            response.headers.get("x-request-id"),
+            meta.get("params", {}).get("credits_used"),
+            meta.get("credits", {}).get("available"),
+        )
+
+    def search_contacts(self, company_identifier: str, max_results: int) -> ContactProviderResult:
+        payload, response = self._request(
+            "domain-search", {"domain": company_identifier, "limit": max_results}
+        )
+        emails = (payload.get("data") or {}).get("emails", [])
+        if not isinstance(emails, list):
+            raise ProviderMalformedResponse("Hunter returned malformed contacts")
+        return self._result(
+            payload, response, tuple(self._contact(x) for x in emails[:max_results])
+        )
+
+    def find_email(self, person: dict) -> ContactProviderResult:
+        payload, response = self._request("email-finder", person)
+        data = payload.get("data") or {}
+        if data.get("email"):
+            data = {**data, "value": data["email"]}
+        return self._result(payload, response, (self._contact(data),) if data.get("email") else ())
+
+    def verify_email(self, email: str) -> ContactProviderResult:
+        payload, response = self._request("email-verifier", {"email": email})
+        data = payload.get("data") or {}
+        if not isinstance(data, dict):
+            raise ProviderMalformedResponse("Hunter returned malformed verification")
+        contact = ProviderContact(
+            email=email,
+            confidence=data.get("score") if isinstance(data.get("score"), int) else None,
+            reference=data.get("status"),
+        )
+        return self._result(payload, response, (contact,))
