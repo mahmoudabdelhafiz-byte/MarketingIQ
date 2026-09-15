@@ -100,14 +100,18 @@ class FakeContactProvider:
         self.calls["find"] += 1
         self._maybe_raise()
         contacts = (
-            ProviderContact(
-                reference="finder-ref",
-                first_name=person.get("first_name"),
-                last_name=person.get("last_name"),
-                email=self.found_email,
-                confidence=91,
-            ),
-        ) if self.found_email else ()
+            (
+                ProviderContact(
+                    reference="finder-ref",
+                    first_name=person.get("first_name"),
+                    last_name=person.get("last_name"),
+                    email=self.found_email,
+                    confidence=91,
+                ),
+            )
+            if self.found_email
+            else ()
+        )
         return ContactProviderResult(
             self.key,
             contacts,
@@ -423,7 +427,12 @@ def test_tenant_isolation_and_read_only_credit_controls(session):
     session.add(other)
     session.flush()
     wrong_tenant = TenantContext(other.id, case["user"].id, MembershipRole.MARKETING_USER)
-    wrong_service = ContactDiscoveryService(session, wrong_tenant, ProviderRegistry([provider]), NOW)
+    wrong_service = ContactDiscoveryService(
+        session,
+        wrong_tenant,
+        ProviderRegistry([provider]),
+        NOW,
+    )
     with pytest.raises(NotFoundError):
         wrong_service.list(case["relationship"].id)
 
