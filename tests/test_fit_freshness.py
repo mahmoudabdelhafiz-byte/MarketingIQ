@@ -140,6 +140,28 @@ def test_same_fact_staleness_and_new_conflict_are_quality_changes(session):
     assert conflict["reasons"][0]["current_quality"] == "CONFLICTED"
 
 
+def test_same_fact_review_and_confidence_changes_are_quality_changes(session):
+    context, relationship, product, icp = scenario(session)
+    selected = fact(session, relationship, "Software", confidence=90)
+    assessment = assess(session, context, relationship, product, icp)
+
+    intelligence = IntelligenceService(session, context, now=NOW)
+    intelligence.review(
+        relationship.id,
+        "industry",
+        ReviewRequest(ReviewAction.APPROVE, selected_fact_id=selected.id),
+    )
+    reviewed = freshness(session, context, assessment)
+    assert reviewed["freshness_status"] == FreshnessStatus.QUALITY_CHANGED
+    assert reviewed["reasons"][0]["code"] == "HUMAN_OVERRIDE_CHANGED"
+
+    reviewed_assessment = assess(session, context, relationship, product, icp)
+    selected.confidence = 75
+    confidence = freshness(session, context, reviewed_assessment)
+    assert confidence["freshness_status"] == FreshnessStatus.QUALITY_CHANGED
+    assert confidence["reasons"][0]["code"] == "EVIDENCE_CONFIDENCE_CHANGED"
+
+
 def test_icp_lineage_supersedes_but_unrelated_icp_does_not(session):
     context, relationship, product, icp = scenario(session)
     fact(session, relationship, "Software")

@@ -72,6 +72,8 @@ class FitAssessmentFreshnessService:
             current_fact_id = current.get("selected_fact_id") if current else None
             previous_quality = previous.get("quality", "CURRENT")
             current_quality = projection_quality(current)
+            previous_confidence = previous.get("confidence")
+            current_confidence = current.get("confidence") if current else 0
             previous_value = previous.get("actual_value")
             current_value = current.get("value") if current else None
             prior_result = criterion.get("result", "UNKNOWN")
@@ -92,7 +94,12 @@ class FitAssessmentFreshnessService:
                 )
                 if field in previous
             )
-            criterion_quality_changed = previous_quality != current_quality or detail_changed
+            confidence_changed = (
+                previous_confidence is not None and previous_confidence != current_confidence
+            )
+            criterion_quality_changed = (
+                previous_quality != current_quality or detail_changed or confidence_changed
+            )
             if not input_changed and not criterion_quality_changed:
                 continue
 
@@ -102,16 +109,7 @@ class FitAssessmentFreshnessService:
             effective_key = fact_key or previous.get("fact_key")
             if effective_key:
                 changed_fact_keys.add(effective_key)
-            code = self._reason_code(
-                previous_fact_id,
-                current_fact_id,
-                prior_result,
-                current_result,
-                previous_quality,
-                current_quality,
-                input_changed,
-                detail_changed,
-            )
+            code = self._reason_code(previous, current, prior_result, current_result, input_changed)
             reasons.append(
                 {
                     "code": code,
@@ -202,24 +200,43 @@ class FitAssessmentFreshnessService:
 
     @staticmethod
     def _reason_code(
-        previous_id: str | None,
-        current_id: str | None,
+        previous: dict[str, Any],
+        current: dict[str, Any] | None,
         previous_result: str,
         current_result: str,
-        previous_quality: str,
-        current_quality: str,
         input_changed: bool,
-        detail_changed: bool,
     ) -> str:
+        previous_id = previous.get("selected_fact_id")
+        current_id = current.get("selected_fact_id") if current else None
+        previous_quality = previous.get("quality", "CURRENT")
+        current_quality = projection_quality(current)
+        previous_selection = previous.get("selection_reason")
+        current_selection = current.get("selection_reason") if current else None
         if previous_result == "UNKNOWN" and current_result != "UNKNOWN":
             return "UNKNOWN_BECAME_KNOWN"
+        if previous_selection and previous_selection.startswith("HUMAN_") and not (
+            current_selection and current_selection.startswith("HUMAN_")
+        ):
+            return "HUMAN_OVERRIDE_REVOKED"
+        if current_selection and current_selection.startswith("HUMAN_") and (
+            previous_selection != current_selection or previous_id != current_id
+        ):
+            return "HUMAN_OVERRIDE_CHANGED"
         if previous_id != current_id:
             return "SELECTED_FACT_CHANGED"
         if previous_result != current_result:
             return "CRITERION_RESULT_CHANGED"
+        previous_conflict = previous.get("conflict_status")
+        current_conflict = current.get("conflict_status") if current else "NONE"
+        if previous_conflict is not None and previous_conflict != current_conflict:
+            return "CONFLICT_RESOLVED" if current_conflict == "NONE" else "CONFLICT_CHANGED"
         if previous_quality != current_quality:
             return f"QUALITY_{previous_quality}_TO_{current_quality}"
-        if detail_changed:
+        if previous.get("review_status") != (current.get("review_status") if current else None):
+            return "REVIEW_STATUS_CHANGED"
+        if previous.get("confidence") != (current.get("confidence") if current else 0):
+            return "EVIDENCE_CONFIDENCE_CHANGED"
+        if previous_selection != current_selection:
             return "PROJECTION_QUALITY_CHANGED"
         return "INTELLIGENCE_INPUT_CHANGED" if input_changed else "NEEDS_REASSESSMENT"
 
