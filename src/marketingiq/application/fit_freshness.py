@@ -85,6 +85,7 @@ class FitAssessmentFreshnessService:
             detail_changed = any(
                 previous.get(field) != (current.get(field) if current else default)
                 for field, default in (
+                    ("confidence", 0),
                     ("staleness_status", "UNKNOWN"),
                     ("conflict_status", "NONE"),
                     ("review_status", "UNREVIEWED"),
