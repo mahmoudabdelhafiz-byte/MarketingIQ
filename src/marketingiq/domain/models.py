@@ -15,6 +15,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -70,8 +71,15 @@ class ProductStatus(enum.StrEnum):
 class ResearchStatus(enum.StrEnum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
-    SUCCEEDED = "SUCCEEDED"
+    COMPLETED = "COMPLETED"
+    PARTIAL = "PARTIAL"
     FAILED = "FAILED"
+
+
+class ResearchMode(enum.StrEnum):
+    PUBLIC_ONLY = "PUBLIC_ONLY"
+    PUBLIC_THEN_EXTERNAL = "PUBLIC_THEN_EXTERNAL"
+    EXTERNAL_ONLY = "EXTERNAL_ONLY"
 
 
 class Organization(Base, TimestampMixin):
@@ -229,12 +237,42 @@ class ResearchRun(Base, TimestampMixin):
     company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), index=True)
     initiated_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
     purpose: Mapped[str] = mapped_column(String(100))
+    mode: Mapped[ResearchMode] = mapped_column(
+        Enum(ResearchMode, native_enum=False, validate_strings=True, create_constraint=True),
+        default=ResearchMode.PUBLIC_ONLY,
+    )
     status: Mapped[ResearchStatus] = mapped_column(
         Enum(ResearchStatus, native_enum=False, validate_strings=True, create_constraint=True),
         default=ResearchStatus.PENDING,
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    providers_attempted: Mapped[list[str]] = mapped_column(JSON, default=list)
+    providers_succeeded: Mapped[list[str]] = mapped_column(JSON, default=list)
+    error_summary: Mapped[str | None] = mapped_column(Text)
+    workflow_version: Mapped[str | None] = mapped_column(String(100))
+
+
+class ProviderUsage(Base):
+    """Sanitized accounting record; provider response bodies never belong here."""
+
+    __tablename__ = "provider_usage"
+    __table_args__ = (Index("ix_provider_usage_org_requested", "organization_id", "requested_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    provider_key: Mapped[str] = mapped_column(String(100), index=True)
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), index=True)
+    operation: Mapped[str] = mapped_column(String(100))
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    success: Mapped[bool] = mapped_column(Boolean, default=False)
+    response_status: Mapped[str] = mapped_column(String(50), default="PENDING")
+    credits_used: Mapped[int | None] = mapped_column(Integer)
+    estimated_cost: Mapped[Any | None] = mapped_column(Numeric(12, 4))
+    credits_remaining: Mapped[int | None] = mapped_column(Integer)
+    request_identifier: Mapped[str | None] = mapped_column(String(255))
+    error_category: Mapped[str | None] = mapped_column(String(100))
+    cache_hit: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class CompanyFact(Base):

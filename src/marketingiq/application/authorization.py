@@ -9,11 +9,15 @@ class Permission(StrEnum):
     READ = "READ"
     WRITE_CATALOG = "WRITE_CATALOG"
     IMPORT_COMPANIES = "IMPORT_COMPANIES"
+    RUN_PUBLIC_RESEARCH = "RUN_PUBLIC_RESEARCH"
+    RUN_EXTERNAL_RESEARCH = "RUN_EXTERNAL_RESEARCH"
 
 
 ROLE_PERMISSIONS = {
     MembershipRole.ORGANIZATION_ADMIN: frozenset(Permission),
-    MembershipRole.MARKETING_USER: frozenset({Permission.READ, Permission.WRITE_CATALOG}),
+    MembershipRole.MARKETING_USER: frozenset(
+        {Permission.READ, Permission.WRITE_CATALOG, Permission.RUN_PUBLIC_RESEARCH}
+    ),
     MembershipRole.READ_ONLY: frozenset({Permission.READ}),
 }
 

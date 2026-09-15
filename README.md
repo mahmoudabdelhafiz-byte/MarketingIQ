@@ -1,5 +1,8 @@
 # MarketingIQ
 
+The Sprint 2 company research/provider design, security policy, modes, and credential handling are
+documented in [Provider research foundation](docs/provider-research.md).
+
 MarketingIQ is a multi-tenant B2B marketing-intelligence platform intended to turn
 company evidence, product fit, buyer-role and campaign outcomes into reusable intelligence.
 The repository contains the Sprint 1 domain foundation and a thin authenticated internal API.

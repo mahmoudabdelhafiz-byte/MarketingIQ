@@ -8,6 +8,7 @@ from marketingiq.domain.models import (
     MembershipRole,
     ProductStatus,
     RedistributionStatus,
+    ResearchMode,
 )
 
 
@@ -151,3 +152,9 @@ class DataSourceWrite(Schema):
 
 class CsvImport(Schema):
     content: str
+
+
+class ResearchRequest(Schema):
+    mode: ResearchMode = ResearchMode.PUBLIC_ONLY
+    providers: list[str] = Field(default_factory=list, max_length=10)
+    force_refresh: bool = False
