@@ -33,6 +33,7 @@ from marketingiq.application.catalog import CatalogService
 from marketingiq.application.companies import CompanyService, EvidenceInput, FactInput, ImportReport
 from marketingiq.application.errors import AuthorizationError, ConflictError, NotFoundError
 from marketingiq.application.fit import FitAssessmentService
+from marketingiq.application.fit_freshness import FitAssessmentFreshnessService
 from marketingiq.application.intelligence import IntelligenceService, ReviewRequest
 from marketingiq.application.research import CompanyResearchService, ProviderRegistry
 from marketingiq.application.tenant import TenantContext
@@ -117,6 +118,11 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
         context: TenantContext = Depends(tenant), db: Session = Depends(session)
     ) -> FitAssessmentService:
         return FitAssessmentService(db, context)
+
+    def fit_freshness_service(
+        context: TenantContext = Depends(tenant), db: Session = Depends(session)
+    ) -> FitAssessmentFreshnessService:
+        return FitAssessmentFreshnessService(db, context)
 
     @app.exception_handler(NotFoundError)
     async def not_found(_request, error):
@@ -304,6 +310,27 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
         svc: FitAssessmentService = Depends(fit_service),
     ):
         return _assessment_output(svc.get(relationship_id, assessment_id))
+
+    @app.get(fit_prefix + "/{assessment_id}/freshness")
+    def fit_assessment_freshness(
+        relationship_id: str,
+        assessment_id: str,
+        svc: FitAssessmentFreshnessService = Depends(fit_freshness_service),
+    ):
+        return svc.get(relationship_id, assessment_id)
+
+    @app.post(fit_prefix + "/{assessment_id}/reevaluate", status_code=201)
+    def reevaluate_fit_assessment(
+        relationship_id: str,
+        assessment_id: str,
+        svc: FitAssessmentService = Depends(fit_service),
+        freshness: FitAssessmentFreshnessService = Depends(fit_freshness_service),
+    ):
+        old = svc.get(relationship_id, assessment_id)
+        current = freshness.get(relationship_id, assessment_id)
+        return _assessment_output(
+            svc.evaluate(relationship_id, old.product_id, current["current_icp_id"])
+        )
 
     @app.post(prefix + "/companies/{relationship_id}/facts", status_code=201)
     def add_fact(

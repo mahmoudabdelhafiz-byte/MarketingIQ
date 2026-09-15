@@ -8,10 +8,13 @@ from sqlalchemy.orm import Session, selectinload
 
 from marketingiq.application.authorization import Permission, require_permission
 from marketingiq.application.errors import NotFoundError
+from marketingiq.application.fit_criteria import (
+    SUPPORTED_FACT_KEYS,
+    projection_quality,
+    select_projection,
+)
 from marketingiq.application.intelligence import (
-    ConflictStatus,
     IntelligenceService,
-    StalenessStatus,
 )
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.models import (
@@ -26,18 +29,6 @@ from marketingiq.domain.models import (
 )
 
 WORKFLOW_VERSION = "deterministic-fit-v1"
-SUPPORTED_FACT_KEYS = {
-    "industry": ("industry",),
-    "country": ("country", "country_code"),
-    "employee_min": ("employee_count", "employee_range"),
-    "employee_max": ("employee_count", "employee_range"),
-    "company_size": ("company_size", "employee_range"),
-    "active_hiring": ("active_hiring",),
-    "business_service": ("business_services", "business_service"),
-    "location": ("locations", "headquarters", "location"),
-    "keyword": ("keywords", "company_description"),
-    "presence_signal": ("presence_signals", "keywords", "company_description"),
-}
 
 
 class FitAssessmentService:
@@ -159,10 +150,15 @@ class FitAssessmentService:
                     k: x[k]
                     for k in (
                         "criterion_id",
+                        "fact_key",
                         "selected_fact_id",
                         "actual_value",
                         "confidence",
                         "quality",
+                        "staleness_status",
+                        "conflict_status",
+                        "review_status",
+                        "selection_reason",
                     )
                 }
                 for x in results
@@ -255,6 +251,7 @@ class FitAssessmentService:
                 "type": kind,
                 "expected_value": criterion["expected"],
                 "actual_value": None,
+                "fact_key": None,
                 "result": "UNKNOWN",
                 "confidence": 0,
                 "selected_fact_id": None,
@@ -262,23 +259,21 @@ class FitAssessmentService:
                 "weight": criterion["weight"],
                 "required": criterion["required"],
                 "quality": "CURRENT",
+                "staleness_status": "UNKNOWN",
+                "conflict_status": "NONE",
+                "review_status": "UNREVIEWED",
+                "selection_reason": None,
             }
-        projection = next((facts[key] for key in SUPPORTED_FACT_KEYS[kind] if key in facts), None)
+        fact_key, projection = select_projection(kind, facts)
         actual = projection["value"] if projection else None
         result, reason = self._compare(kind, criterion["expected"], actual)
-        quality = "CURRENT"
-        if projection and projection["conflict_status"] in {
-            ConflictStatus.MATERIAL,
-            ConflictStatus.NEEDS_REVIEW,
-        }:
-            quality = "CONFLICTED"
-        elif projection and projection["staleness_status"] == StalenessStatus.STALE:
-            quality = "STALE"
+        quality = projection_quality(projection)
         return {
             "criterion_id": criterion["id"],
             "type": kind,
             "expected_value": criterion["expected"],
             "actual_value": actual,
+            "fact_key": fact_key,
             "result": result,
             "confidence": projection["confidence"] if projection else 0,
             "selected_fact_id": projection["selected_fact_id"] if projection else None,
@@ -286,6 +281,10 @@ class FitAssessmentService:
             "weight": criterion["weight"],
             "required": criterion["required"],
             "quality": quality,
+            "staleness_status": projection["staleness_status"] if projection else "UNKNOWN",
+            "conflict_status": projection["conflict_status"] if projection else "NONE",
+            "review_status": projection["review_status"] if projection else "UNREVIEWED",
+            "selection_reason": projection["selection_reason"] if projection else None,
         }
 
     @staticmethod

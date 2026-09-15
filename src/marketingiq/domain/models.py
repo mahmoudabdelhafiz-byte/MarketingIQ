@@ -180,6 +180,7 @@ class ICP(Base, TimestampMixin):
         ),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    logical_id: Mapped[str | None] = mapped_column(String(36), index=True)
     organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
     product_id: Mapped[str] = mapped_column(String(36))
     name: Mapped[str] = mapped_column(String(200))

@@ -36,3 +36,28 @@ weight, current-best selected fact ID, confidence and quality; it also groups po
 factors, research gaps and stale/conflicted facts. Snapshots intentionally omit evidence text,
 provider payloads, and restricted URLs. Assessment output is classified `MARKETINGIQ_DERIVED`; that
 does not change the redistribution rights of underlying facts.
+
+## Freshness and reassessment
+
+Assessment history remains immutable. `CURRENT` means the canonical intelligence projections used
+by every criterion still select the same normalized inputs with the same material quality state,
+and the assessed ICP is still the active revision of its logical lineage. Freshness is computed on
+read; an old row is never rewritten merely because time passed or new information arrived.
+
+Intelligence supersession includes a newly selected fact, an `UNKNOWN` becoming known, a changed
+criterion result, and human review or override changes. Quality is tracked independently so the same
+fact becoming stale, gaining a credible conflict, or changing review state also recommends
+reassessment. `UNKNOWN` remains distinct from `NO_MATCH`: newly available evidence does not make the
+old assessment erroneous; it means a new evaluation can now be better informed.
+
+ICP updates create new immutable rows with new IDs. Their shared `logical_id` identifies revisions;
+therefore an active higher revision supersedes only assessments in that lineage, never another ICP
+for the same Product. Legacy rows without a logical ID use the pre-existing Product/name/version
+convention as a compatibility fallback.
+
+`GET .../fit-assessments/{assessment_id}/freshness` is available to every tenant member with read
+access. Marketing Users and Organization Admins can use
+`POST .../fit-assessments/{assessment_id}/reevaluate`; it delegates to the normal evaluation path,
+creates a new assessment and its single normal audit event, and preserves the old assessment.
+Freshness reasons contain only safe identifiers and normalized quality labels—never provider
+payloads, credentials, evidence bodies, or restricted URLs.
