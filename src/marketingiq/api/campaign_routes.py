@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Annotated, Any
+from typing import Any
 
 from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
@@ -26,8 +26,8 @@ def register_campaign_routes(
     session_dependency: Callable[..., Session],
 ) -> None:
     def campaign_service(
-        context: Annotated[TenantContext, Depends(tenant_dependency)],
-        db: Annotated[Session, Depends(session_dependency)],
+        context: TenantContext = Depends(tenant_dependency),
+        db: Session = Depends(session_dependency),
     ) -> CampaignDraftService:
         return CampaignDraftService(db, context)
 
@@ -37,7 +37,7 @@ def register_campaign_routes(
     def generate_campaign_draft(
         relationship_id: str,
         body: CampaignDraftRequest,
-        svc: Annotated[CampaignDraftService, Depends(campaign_service)],
+        svc: CampaignDraftService = Depends(campaign_service),
     ):
         return _campaign_draft_output(
             svc.generate(
@@ -52,7 +52,7 @@ def register_campaign_routes(
     @app.get(campaign_prefix)
     def campaign_drafts(
         relationship_id: str,
-        svc: Annotated[CampaignDraftService, Depends(campaign_service)],
+        svc: CampaignDraftService = Depends(campaign_service),
     ):
         return [_campaign_draft_output(item) for item in svc.list(relationship_id)]
 
@@ -60,7 +60,7 @@ def register_campaign_routes(
     def campaign_draft(
         relationship_id: str,
         draft_id: str,
-        svc: Annotated[CampaignDraftService, Depends(campaign_service)],
+        svc: CampaignDraftService = Depends(campaign_service),
     ):
         return _campaign_draft_output(svc.get(relationship_id, draft_id))
 
