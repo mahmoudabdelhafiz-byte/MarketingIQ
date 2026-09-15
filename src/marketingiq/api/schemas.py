@@ -54,6 +54,8 @@ class ProductWrite(Schema):
     employee_min: int | None = Field(default=None, ge=0)
     employee_max: int | None = Field(default=None, ge=0)
     criteria: list[Criterion] = Field(default_factory=list, max_length=100)
+    primary_buyer_roles: list[str] = Field(default_factory=list, max_length=20)
+    secondary_buyer_roles: list[str] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
     def validate_employee_range(self):
@@ -166,6 +168,10 @@ class ResearchRequest(Schema):
 class FitAssessmentRequest(Schema):
     product_id: str
     icp_id: str
+
+
+class QualificationRequest(Schema):
+    fit_assessment_id: str
 
 
 class EvaluateAllProductsRequest(Schema):

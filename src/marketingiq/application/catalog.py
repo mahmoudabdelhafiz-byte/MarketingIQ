@@ -100,6 +100,8 @@ class CatalogService:
 
     def create_product(self, **data: object) -> Product:
         require_permission(self.tenant, Permission.WRITE_CATALOG)
+        if data.get("primary_buyer_roles") or data.get("secondary_buyer_roles"):
+            require_permission(self.tenant, Permission.MANAGE_BUYER_ROLES)
         criteria = normalize_criteria(data.pop("criteria", []))
         allowed = {
             key: data[key]
@@ -110,6 +112,8 @@ class CatalogService:
                 "value_proposition",
                 "employee_min",
                 "employee_max",
+                "primary_buyer_roles",
+                "secondary_buyer_roles",
             )
             if key in data
         }
@@ -124,6 +128,12 @@ class CatalogService:
     def update_product(self, product_id: str, **data: object) -> Product:
         require_permission(self.tenant, Permission.WRITE_CATALOG)
         product = self.get_product(product_id)
+        role_configuration_changed = any(
+            key in data and data[key] != getattr(product, key)
+            for key in ("primary_buyer_roles", "secondary_buyer_roles")
+        )
+        if role_configuration_changed:
+            require_permission(self.tenant, Permission.MANAGE_BUYER_ROLES)
         raw_criteria = data.pop("criteria", None)
         criteria = normalize_criteria(raw_criteria) if raw_criteria is not None else None
         for key in (
@@ -133,6 +143,8 @@ class CatalogService:
             "value_proposition",
             "employee_min",
             "employee_max",
+            "primary_buyer_roles",
+            "secondary_buyer_roles",
         ):
             if key in data:
                 setattr(product, key, data[key])

@@ -236,7 +236,11 @@ class FitAssessmentFreshnessService:
         if previous.get("review_status") != (current.get("review_status") if current else None):
             return "REVIEW_STATUS_CHANGED"
         if previous.get("confidence") != (current.get("confidence") if current else 0):
-            return "EVIDENCE_CONFIDENCE_CHANGED"
+            return (
+                "EVIDENCE_CONFIDENCE_CHANGED"
+                if previous_selection and previous_selection.startswith("HUMAN_")
+                else "PROJECTION_QUALITY_CHANGED"
+            )
         if previous_selection != current_selection:
             return "PROJECTION_QUALITY_CHANGED"
         return "INTELLIGENCE_INPUT_CHANGED" if input_changed else "NEEDS_REASSESSMENT"
