@@ -182,6 +182,7 @@ class CatalogService:
         ]
         self.session.add(icp)
         self._flush()
+        icp.logical_id = icp.id
         _audit(self.session, self.tenant, "icp.created", icp)
         self._commit()
         return icp
@@ -203,6 +204,7 @@ class CatalogService:
             product_id=old.product_id,
             version=old.version + 1,
             is_active=data.pop("is_active", True),
+            logical_id=old.logical_id or old.id,
             **values,
         )
         revision.criteria = [
