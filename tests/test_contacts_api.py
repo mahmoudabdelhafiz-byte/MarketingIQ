@@ -283,8 +283,19 @@ def test_contact_api_enforces_limits_rbac_and_runs_full_channel_flow(tmp_path):
     assert listing.status_code == 200
     assert detail.status_code == 200
 
-    assert client.post(f"{base}/{contact_id}/find-email", headers=reader).status_code == 403
-    found = client.post(f"{base}/{contact_id}/find-email", headers=marketing)
+    assert (
+        client.post(
+            f"{base}/{contact_id}/find-email",
+            headers=reader,
+            json={},
+        ).status_code
+        == 403
+    )
+    found = client.post(
+        f"{base}/{contact_id}/find-email",
+        headers=marketing,
+        json={},
+    )
     assert found.status_code == 200
     assert provider.calls["find"] == 1
 
