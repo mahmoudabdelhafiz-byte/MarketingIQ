@@ -1,6 +1,6 @@
 """Domain model and provider ports."""
 
-from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy import CheckConstraint, Index, UniqueConstraint
 
 from marketingiq.domain.models import *  # noqa: F403
 from marketingiq.domain.models import Base
@@ -31,6 +31,22 @@ def _replace_text_unique_constraint(
         )
 
 
+def _namespace_check_constraints() -> None:
+    """MySQL requires CHECK constraint names to be unique across the database schema."""
+    used: set[str] = set()
+    for table in Base.metadata.sorted_tables:
+        for constraint in table.constraints:
+            if not isinstance(constraint, CheckConstraint) or not constraint.name:
+                continue
+            name = str(constraint.name)
+            if name in used:
+                name = f"{table.name}_{name}"
+            if name in used:
+                name = f"{table.name}_{name}_{len(used)}"
+            constraint.name = name[:64]
+            used.add(constraint.name)
+
+
 _replace_text_unique_constraint(
     "product_criteria",
     "product_id",
@@ -41,3 +57,4 @@ _replace_text_unique_constraint(
     "icp_id",
     "uq_icp_criteria_icp_kind_value",
 )
+_namespace_check_constraints()
