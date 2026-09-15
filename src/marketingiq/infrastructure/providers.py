@@ -283,7 +283,7 @@ class HunterProvider:
             payload = response.json()
         except ValueError as error:
             raise ProviderMalformedResponse("Hunter returned an invalid response") from error
-        if not isinstance(payload, dict) or not isinstance(payload.get("data", {}), (dict, list)):
+        if not isinstance(payload, dict) or not isinstance(payload.get("data", {}), dict | list):
             raise ProviderMalformedResponse("Hunter returned a malformed response")
         return payload, response
 
