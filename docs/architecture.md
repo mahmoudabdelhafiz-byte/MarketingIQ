@@ -10,6 +10,10 @@ MarketingIQ is an API-ready modular monolith:
 - Future UI, REST handlers and background workers call application services rather than models
   or provider SDKs directly.
 
+`CompanyService` is the tenant-scoped boundary for company relationships, facts, evidence, and
+synchronous CSV imports. The authenticated internal API derives its `TenantContext` from the JWT
+actor and organization membership; it never trusts an actor identifier supplied in a header.
+
 PostgreSQL is the production system of record. Background work can initially use a database
 outbox/job table and a separate worker process from the same codebase; select a queue only when
 load and delivery semantics are known. A public API is deliberately not implemented yet.
@@ -85,3 +89,7 @@ and normalized criteria, Company, CompanyIdentifier, OrganizationCompany, Compan
 DataSource, ResearchRun, HumanOverride and AuditLog. Contacts, Leads, Campaigns and Opportunities
 will be tenant-owned aggregates linked to the global company identity; they are intentionally
 documented rather than prematurely implemented.
+
+The company endpoints normalize and reuse shared domain identities, expose only global and active
+tenant facts, restrict CSV imports to Organization Admins, and audit company, fact, evidence, and
+import mutations. Only `MANUAL` and `CSV` data sources are accepted in Sprint 1.

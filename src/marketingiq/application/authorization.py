@@ -8,11 +8,12 @@ from marketingiq.domain.models import MembershipRole
 class Permission(StrEnum):
     READ = "READ"
     WRITE_CATALOG = "WRITE_CATALOG"
+    IMPORT_COMPANIES = "IMPORT_COMPANIES"
 
 
 ROLE_PERMISSIONS = {
     MembershipRole.ORGANIZATION_ADMIN: frozenset(Permission),
-    MembershipRole.MARKETING_USER: frozenset(Permission),
+    MembershipRole.MARKETING_USER: frozenset({Permission.READ, Permission.WRITE_CATALOG}),
     MembershipRole.READ_ONLY: frozenset({Permission.READ}),
 }
 
