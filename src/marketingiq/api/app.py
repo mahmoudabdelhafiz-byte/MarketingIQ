@@ -25,6 +25,7 @@ from marketingiq.api.schemas import (
     MeResponse,
     ProductResponse,
     ProductWrite,
+    QualificationRequest,
     ResearchRequest,
     TokenResponse,
 )
@@ -35,6 +36,7 @@ from marketingiq.application.errors import AuthorizationError, ConflictError, No
 from marketingiq.application.fit import FitAssessmentService
 from marketingiq.application.fit_freshness import FitAssessmentFreshnessService
 from marketingiq.application.intelligence import IntelligenceService, ReviewRequest
+from marketingiq.application.qualification import LeadQualificationService
 from marketingiq.application.research import CompanyResearchService, ProviderRegistry
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.models import OrganizationMembership, ReviewAction, User
@@ -123,6 +125,11 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
         context: TenantContext = Depends(tenant), db: Session = Depends(session)
     ) -> FitAssessmentFreshnessService:
         return FitAssessmentFreshnessService(db, context)
+
+    def qualification_service(
+        context: TenantContext = Depends(tenant), db: Session = Depends(session)
+    ) -> LeadQualificationService:
+        return LeadQualificationService(db, context)
 
     @app.exception_handler(NotFoundError)
     async def not_found(_request, error):
@@ -332,6 +339,39 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
             svc.evaluate(relationship_id, old.product_id, current["current_icp_id"])
         )
 
+    qualification_prefix = prefix + "/companies/{relationship_id}/qualifications"
+
+    @app.post(qualification_prefix, status_code=201)
+    def qualify_lead(
+        relationship_id: str,
+        body: QualificationRequest,
+        svc: LeadQualificationService = Depends(qualification_service),
+    ):
+        return _qualification_output(svc.execute(relationship_id, body.fit_assessment_id))
+
+    @app.get(qualification_prefix)
+    def qualification_history(
+        relationship_id: str,
+        svc: LeadQualificationService = Depends(qualification_service),
+    ):
+        return [_qualification_output(item) for item in svc.list(relationship_id)]
+
+    @app.get(qualification_prefix + "/{qualification_id}")
+    def qualification(
+        relationship_id: str,
+        qualification_id: str,
+        svc: LeadQualificationService = Depends(qualification_service),
+    ):
+        return _qualification_output(svc.get(relationship_id, qualification_id))
+
+    @app.post(qualification_prefix + "/{qualification_id}/reevaluate", status_code=201)
+    def reevaluate_qualification(
+        relationship_id: str,
+        qualification_id: str,
+        svc: LeadQualificationService = Depends(qualification_service),
+    ):
+        return _qualification_output(svc.reevaluate(relationship_id, qualification_id))
+
     @app.post(prefix + "/companies/{relationship_id}/facts", status_code=201)
     def add_fact(
         relationship_id: str,
@@ -495,6 +535,34 @@ def _assessment_output(item) -> dict[str, Any]:
         "workflow_version": item.workflow_version,
         "evidence_snapshot": item.evidence_snapshot,
         "explanation": item.explanation,
+        "classification": item.classification,
+        "created_by_user_id": item.created_by_user_id,
+    }
+
+
+def _qualification_output(item) -> dict[str, Any]:
+    return {
+        "qualification_id": item.id,
+        "organization_id": item.organization_id,
+        "company_id": item.company_id,
+        "organization_company_id": item.organization_company_id,
+        "product_id": item.product_id,
+        "fit_assessment_id": item.fit_assessment_id,
+        **item.reasons.get("fit_summary", {}),
+        "qualification_score": item.qualification_score,
+        "qualification_grade": item.qualification_grade,
+        "status": item.status,
+        "confidence": item.confidence,
+        "recommended_buyer_role": item.recommended_buyer_role,
+        "buyer_role_confidence": item.buyer_role_confidence,
+        "alternative_buyer_roles": item.alternative_buyer_roles,
+        "positive_reasons": item.reasons.get("positive_reasons", []),
+        "negative_reasons": item.reasons.get("negative_reasons", []),
+        "buyer_role_reason_codes": item.reasons.get("buyer_role_reason_codes", []),
+        "research_gaps": item.research_gaps,
+        "component_scores": item.component_scores,
+        "workflow_version": item.workflow_version,
+        "qualified_at": item.qualified_at,
         "classification": item.classification,
         "created_by_user_id": item.created_by_user_id,
     }

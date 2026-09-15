@@ -1,5 +1,8 @@
 # MarketingIQ
 
+Lead qualification methodology and buyer-role configuration are documented in
+[`docs/lead-qualification.md`](docs/lead-qualification.md).
+
 The Sprint 2 company research/provider design, security policy, modes, and credential handling are
 documented in [Provider research foundation](docs/provider-research.md).
 

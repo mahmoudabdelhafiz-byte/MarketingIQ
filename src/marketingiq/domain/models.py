@@ -105,6 +105,23 @@ class FitStatus(enum.StrEnum):
     STALE = "STALE"
 
 
+class QualificationGrade(enum.StrEnum):
+    A = "A"
+    B = "B"
+    C = "C"
+    D = "D"
+    UNKNOWN = "UNKNOWN"
+
+
+class QualificationStatus(enum.StrEnum):
+    HIGH_PRIORITY = "HIGH_PRIORITY"
+    QUALIFIED = "QUALIFIED"
+    NURTURE = "NURTURE"
+    NEEDS_MORE_RESEARCH = "NEEDS_MORE_RESEARCH"
+    NOT_QUALIFIED = "NOT_QUALIFIED"
+    STALE = "STALE"
+
+
 class Organization(Base, TimestampMixin):
     __tablename__ = "organizations"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -149,6 +166,8 @@ class Product(Base, TimestampMixin):
     value_proposition: Mapped[str | None] = mapped_column(Text)
     employee_min: Mapped[int | None] = mapped_column(Integer)
     employee_max: Mapped[int | None] = mapped_column(Integer)
+    primary_buyer_roles: Mapped[list[str]] = mapped_column(JSON, default=list)
+    secondary_buyer_roles: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[ProductStatus] = mapped_column(
         Enum(ProductStatus, native_enum=False, validate_strings=True, create_constraint=True),
         default=ProductStatus.DRAFT,
@@ -289,6 +308,55 @@ class ProductFitAssessment(Base):
         default=DataClassification.MARKETINGIQ_DERIVED,
     )
     created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+
+
+class LeadQualification(Base):
+    """Immutable tenant-owned actionability decision derived from a fit assessment."""
+
+    __tablename__ = "lead_qualifications"
+    __table_args__ = (
+        CheckConstraint(
+            "qualification_score >= 0 AND qualification_score <= 100",
+            name="ck_qualification_score",
+        ),
+        Index(
+            "ix_qualification_tenant_relationship_time",
+            "organization_id",
+            "organization_company_id",
+            "qualified_at",
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    organization_company_id: Mapped[str] = mapped_column(
+        ForeignKey("organization_companies.id"), index=True
+    )
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey("products.id"), index=True)
+    fit_assessment_id: Mapped[str] = mapped_column(
+        ForeignKey("product_fit_assessments.id"), index=True
+    )
+    qualification_score: Mapped[int] = mapped_column(Integer)
+    qualification_grade: Mapped[QualificationGrade] = mapped_column(
+        Enum(QualificationGrade, native_enum=False, validate_strings=True, create_constraint=True)
+    )
+    status: Mapped[QualificationStatus] = mapped_column(
+        Enum(QualificationStatus, native_enum=False, validate_strings=True, create_constraint=True)
+    )
+    confidence: Mapped[str] = mapped_column(String(20))
+    recommended_buyer_role: Mapped[str] = mapped_column(String(200))
+    buyer_role_confidence: Mapped[str] = mapped_column(String(20))
+    alternative_buyer_roles: Mapped[Any] = mapped_column(JSON)
+    reasons: Mapped[Any] = mapped_column(JSON)
+    research_gaps: Mapped[Any] = mapped_column(JSON)
+    component_scores: Mapped[Any] = mapped_column(JSON)
+    workflow_version: Mapped[str] = mapped_column(String(100))
+    qualified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    classification: Mapped[DataClassification] = mapped_column(
+        Enum(DataClassification, native_enum=False, validate_strings=True, create_constraint=True),
+        default=DataClassification.MARKETINGIQ_DERIVED,
+    )
 
 
 class DataSource(Base, TimestampMixin):

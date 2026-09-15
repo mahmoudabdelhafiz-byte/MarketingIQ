@@ -13,6 +13,8 @@ class Permission(StrEnum):
     RUN_EXTERNAL_RESEARCH = "RUN_EXTERNAL_RESEARCH"
     REVIEW_INTELLIGENCE = "REVIEW_INTELLIGENCE"
     RUN_FIT_ASSESSMENT = "RUN_FIT_ASSESSMENT"
+    RUN_QUALIFICATION = "RUN_QUALIFICATION"
+    MANAGE_BUYER_ROLES = "MANAGE_BUYER_ROLES"
 
 
 ROLE_PERMISSIONS = {
@@ -23,6 +25,7 @@ ROLE_PERMISSIONS = {
             Permission.WRITE_CATALOG,
             Permission.RUN_PUBLIC_RESEARCH,
             Permission.RUN_FIT_ASSESSMENT,
+            Permission.RUN_QUALIFICATION,
         }
     ),
     MembershipRole.READ_ONLY: frozenset({Permission.READ}),
