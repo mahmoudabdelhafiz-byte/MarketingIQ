@@ -30,7 +30,9 @@ from marketingiq.domain.models import (
 )
 
 WORKFLOW_VERSION = "deterministic-campaign-draft-v1"
-DEFAULT_CTA = "Would a 20-minute conversation be useful to explore whether this could fit your priorities?"
+DEFAULT_CTA = (
+    "Would a 20-minute conversation be useful to explore whether this could fit your priorities?"
+)
 PURSUIT_STATUSES = {QualificationStatus.HIGH_PRIORITY, QualificationStatus.QUALIFIED}
 ALIGNED_ROLE_MATCHES = {
     BuyerRoleMatch.EXACT,
@@ -271,7 +273,10 @@ class CampaignDraftService:
                 f"I thought {product.name} may be relevant."
             )
         else:
-            relevance = f"Given your work at {company_name}, I thought {product.name} may be relevant."
+            relevance = (
+                f"Given your work at {company_name}, "
+                f"I thought {product.name} may be relevant."
+            )
         subject = f"{product.name} for {company_name}"
         body = "\n\n".join(
             [
