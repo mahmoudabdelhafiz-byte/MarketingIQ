@@ -36,7 +36,7 @@ def match_buyer_role(target: str, title: str | None, department: str | None, sen
     if wanted and wanted == actual:
         return BuyerRoleMatch.EXACT, "Normalized title exactly matches the recommended buyer role"
     overlap = wanted & actual
-    if wanted and len(overlap) / len(wanted) >= 0.67:
+    if wanted and len(overlap) / len(wanted) >= 2 / 3:
         return BuyerRoleMatch.STRONG, "Most recommended-role terms occur in the title"
     if overlap or (normalize(department) & wanted) or (normalize(seniority) & wanted):
         return BuyerRoleMatch.PARTIAL, "Title, department, or seniority partially aligns"
