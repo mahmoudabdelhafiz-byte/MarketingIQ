@@ -55,7 +55,12 @@ def upgrade() -> None:
             sa.Column("evidence_snapshot", sa.JSON(), nullable=False),
             sa.Column("explanation", sa.JSON(), nullable=False),
             sa.Column("classification", sa.String(30), nullable=False),
-            sa.Column("created_by_user_id", sa.String(36), sa.ForeignKey("users.id"), nullable=False),
+            sa.Column(
+                "created_by_user_id",
+                sa.String(36),
+                sa.ForeignKey("users.id"),
+                nullable=False,
+            ),
             sa.CheckConstraint("score >= 0 AND score <= 100", name="ck_fit_score"),
             sa.CheckConstraint(
                 "evidence_coverage >= 0 AND evidence_coverage <= 100", name="ck_fit_coverage"
