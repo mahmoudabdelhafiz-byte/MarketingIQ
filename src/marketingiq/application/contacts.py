@@ -291,24 +291,35 @@ class ContactDiscoveryService:
     def find_email(self, relationship_id, contact_id, provider_key="HUNTER", force_refresh=False):
         require_permission(self.tenant, Permission.SPEND_PROVIDER_CREDITS)
         contact = self.get(relationship_id, contact_id)
-        recent = next((x for x in contact.channels if x.found_at >= self.now - self.find_ttl), None)
+        recent = self.session.scalar(
+            select(ContactEmail)
+            .where(
+                ContactEmail.contact_id == contact.id,
+                ContactEmail.found_at >= self.now - self.find_ttl,
+            )
+            .order_by(ContactEmail.found_at.desc())
+        )
         provider = self.registry.get(provider_key)
-        # Finder freshness is contact-specific; do not reuse another person's company-level usage.
-        usage, cached = self._usage(provider, contact.company_id, "EMAIL_FIND", self.find_ttl, True)
         if recent and not force_refresh:
-            cached = recent
+            usage, _ = self._usage(
+                provider, contact.company_id, "EMAIL_FIND", self.find_ttl, True
+            )
             usage.cache_hit = True
             usage.success = True
             usage.response_status = "CACHED"
             usage.credits_used = 0
             usage.completed_at = self.now
-        if not cached:
+        else:
             if not contact.first_name or not contact.last_name:
                 raise ConflictError("EMAIL_FIND_NAME_REQUIRED")
+            domain = self._domain(contact.company_id)
+            usage, _ = self._usage(
+                provider, contact.company_id, "EMAIL_FIND", self.find_ttl, True
+            )
             try:
                 result = provider.find_email(
                     {
-                        "domain": self._domain(contact.company_id),
+                        "domain": domain,
                         "first_name": contact.first_name,
                         "last_name": contact.last_name,
                     }
