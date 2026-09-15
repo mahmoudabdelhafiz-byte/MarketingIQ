@@ -11,6 +11,7 @@ from marketingiq.application.qualification import LeadQualificationService
 from marketingiq.application.research import ProviderRegistry
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.models import (
+    ICP,
     Base,
     Company,
     CompanyFact,
@@ -19,7 +20,6 @@ from marketingiq.domain.models import (
     DataClassification,
     FitGrade,
     FitStatus,
-    ICP,
     MembershipRole,
     Organization,
     OrganizationCompany,
