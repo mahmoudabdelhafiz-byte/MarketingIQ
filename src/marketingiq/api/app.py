@@ -22,15 +22,18 @@ from marketingiq.api.schemas import (
     MeResponse,
     ProductResponse,
     ProductWrite,
+    ResearchRequest,
     TokenResponse,
 )
 from marketingiq.application.auth import authenticate, create_access_token, decode_access_token
 from marketingiq.application.catalog import CatalogService
 from marketingiq.application.companies import CompanyService, EvidenceInput, FactInput, ImportReport
 from marketingiq.application.errors import AuthorizationError, ConflictError, NotFoundError
+from marketingiq.application.research import CompanyResearchService, ProviderRegistry
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.models import OrganizationMembership, User
 from marketingiq.infrastructure.database import create_database_engine, create_session_factory
+from marketingiq.infrastructure.providers import HunterProvider, PublicWebProvider
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -41,6 +44,7 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
         raise RuntimeError("AUTH_SECRET must contain at least 32 characters")
     sessions = create_session_factory(create_database_engine(database_url))
     app = FastAPI(title="MarketingIQ internal API", version="1.0.0")
+    app.state.provider_registry = ProviderRegistry([PublicWebProvider(), HunterProvider()])
 
     def session() -> Generator[Session, None, None]:
         with sessions() as value:
@@ -93,6 +97,11 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
         context: TenantContext = Depends(tenant), db: Session = Depends(session)
     ) -> CompanyService:
         return CompanyService(db, context)
+
+    def research_service(
+        context: TenantContext = Depends(tenant), db: Session = Depends(session)
+    ) -> CompanyResearchService:
+        return CompanyResearchService(db, context, app.state.provider_registry)
 
     @app.exception_handler(NotFoundError)
     async def not_found(_request, error):
@@ -185,7 +194,11 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
         shared = {
             key: values.pop(key)
             for key in (
-                "website_url", "country_code", "industry", "employee_min", "employee_max",
+                "website_url",
+                "country_code",
+                "industry",
+                "employee_min",
+                "employee_max",
                 "description",
             )
         }
@@ -233,6 +246,31 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
     def execute_import(body: CsvImport, svc: CompanyService = Depends(company_service)):
         return _report_output(svc.import_csv(body.content))
 
+    @app.post(prefix + "/companies/{relationship_id}/research", status_code=201)
+    def research_company(
+        relationship_id: str,
+        body: ResearchRequest,
+        svc: CompanyResearchService = Depends(research_service),
+    ):
+        return _run_output(svc.run(relationship_id, **body.model_dump()))
+
+    @app.get(prefix + "/companies/{relationship_id}/research-runs")
+    def research_runs(
+        relationship_id: str, svc: CompanyResearchService = Depends(research_service)
+    ):
+        return [_run_output(run) for run in svc.list_runs(relationship_id)]
+
+    @app.get(prefix + "/provider-usage")
+    def provider_usage(svc: CompanyResearchService = Depends(research_service)):
+        return svc.usage_report()
+
+    @app.get(prefix + "/providers/status")
+    def provider_status(
+        context: TenantContext = Depends(tenant),
+    ):
+        # Resolving tenant first intentionally protects even configuration metadata.
+        return app.state.provider_registry.status()
+
     return app
 
 
@@ -242,30 +280,46 @@ def _company_output(item) -> dict[str, Any]:
         None,
     )
     return {
-        "id": item.id, "organization_id": item.organization_id,
-        "company_id": item.company_id, "company": {
-            "id": item.company.id, "canonical_name": item.company.canonical_name,
-        }, "domain": domain,
-        "canonical_name": item.company.canonical_name, "website_url": item.company.website_url,
-        "country_code": item.company.country_code, "industry": item.company.industry,
-        "employee_min": item.company.employee_min, "employee_max": item.company.employee_max,
-        "description": item.company.description, "lifecycle_status": item.lifecycle_status,
+        "id": item.id,
+        "organization_id": item.organization_id,
+        "company_id": item.company_id,
+        "company": {
+            "id": item.company.id,
+            "canonical_name": item.company.canonical_name,
+        },
+        "domain": domain,
+        "canonical_name": item.company.canonical_name,
+        "website_url": item.company.website_url,
+        "country_code": item.company.country_code,
+        "industry": item.company.industry,
+        "employee_min": item.company.employee_min,
+        "employee_max": item.company.employee_max,
+        "description": item.company.description,
+        "lifecycle_status": item.lifecycle_status,
         "private_notes": item.private_notes,
     }
 
 
 def _fact_output(item) -> dict[str, Any]:
     return {
-        "id": item.id, "company_id": item.company_id,
-        "organization_id": item.organization_id, "fact_key": item.fact_key,
-        "value": item.value, "classification": item.classification,
-        "redistribution_status": item.redistribution_status, "confidence": item.confidence,
-        "observed_at": item.observed_at, "valid_until": item.valid_until,
-        "model_version": item.model_version, "research_run_id": item.research_run_id,
+        "id": item.id,
+        "company_id": item.company_id,
+        "organization_id": item.organization_id,
+        "fact_key": item.fact_key,
+        "value": item.value,
+        "classification": item.classification,
+        "redistribution_status": item.redistribution_status,
+        "confidence": item.confidence,
+        "observed_at": item.observed_at,
+        "valid_until": item.valid_until,
+        "model_version": item.model_version,
+        "research_run_id": item.research_run_id,
         "evidence": [
             {
-                "id": evidence.id, "data_source_id": evidence.data_source_id,
-                "reference_url": evidence.reference_url, "reference_text": evidence.reference_text,
+                "id": evidence.id,
+                "data_source_id": evidence.data_source_id,
+                "reference_url": evidence.reference_url,
+                "reference_text": evidence.reference_text,
                 "retrieved_at": evidence.retrieved_at,
                 "last_verified_at": evidence.last_verified_at,
             }
@@ -276,8 +330,10 @@ def _fact_output(item) -> dict[str, Any]:
 
 def _source_output(source) -> dict[str, Any]:
     return {
-        "id": source.id, "provider_key": source.provider_key,
-        "display_name": source.display_name, "external_reference": source.external_reference,
+        "id": source.id,
+        "provider_key": source.provider_key,
+        "display_name": source.display_name,
+        "external_reference": source.external_reference,
         "is_active": source.is_active,
     }
 
@@ -289,4 +345,21 @@ def _report_output(report: ImportReport) -> dict[str, Any]:
             {key: value for key, value in row.__dict__.items() if key != "values"}
             for row in report.rows
         ],
+    }
+
+
+def _run_output(run) -> dict[str, Any]:
+    return {
+        "id": run.id,
+        "organization_id": run.organization_id,
+        "company_id": run.company_id,
+        "initiated_by_user_id": run.initiated_by_user_id,
+        "mode": run.mode,
+        "status": run.status,
+        "started_at": run.started_at,
+        "completed_at": run.completed_at,
+        "providers_attempted": run.providers_attempted,
+        "providers_succeeded": run.providers_succeeded,
+        "error_summary": run.error_summary,
+        "workflow_version": run.workflow_version,
     }
