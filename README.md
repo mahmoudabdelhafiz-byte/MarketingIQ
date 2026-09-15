@@ -32,6 +32,7 @@ per environment. Database roles should have only application-schema privileges.
 ## Documentation
 
 - [Architecture, tenancy, provenance and security](docs/architecture.md)
+- [Company repository, facts, evidence and CSV import](docs/company-repository.md)
 - [Development workflow](docs/development-workflow.md)
 - [Sprint boundaries](docs/sprint-boundaries.md)
 - [ADR 0001: modular monolith and shared company identity](docs/adr/0001-foundation.md)
@@ -46,15 +47,15 @@ contains no personal data, and Barmageyat has no special behavior in the domain 
 
 Routes are versioned beneath `/api/v1`; this is an internal adapter, not the public commercial API. `POST /api/v1/auth/login` exchanges an email/password for a short-lived HS256 bearer token, and `GET /api/v1/me` returns the safe current-user view. Passwords use pwdlib's recommended Argon2 hash and are never returned. `AUTH_SECRET` is required, must be at least 32 characters, and must be supplied by the environment/secret manager.
 
-Tenant resources live below `/api/v1/organizations/{org_id}`. Authentication and organization membership are checked independently; a verified membership produces the `TenantContext` used by every catalog service query. A mismatching optional `X-Organization-ID` is rejected.
+Tenant resources live below `/api/v1/organizations/{org_id}`. Authentication and organization membership are checked independently; a verified membership produces the `TenantContext` used by every catalog/company service query. A mismatching optional `X-Organization-ID` is rejected.
 
-| Role | Read catalog | Create/update products, ICPs, company relationships |
-| --- | --- | --- |
-| Organization Admin | Yes | Yes |
-| Marketing User | Yes | Yes |
-| Read Only | Yes | No |
-| Super Admin | Platform role only | No implicit tenant access |
+| Role | Read catalog/company data | Create/update products, ICPs, companies/facts | CSV company import |
+| --- | --- | --- | --- |
+| Organization Admin | Yes | Yes | Yes |
+| Marketing User | Yes | Yes | No |
+| Read Only | Yes | No | No |
+| Super Admin | Platform role only | No implicit tenant access | No implicit tenant access |
 
-Product routes support list/get/create/update and activation. ICP routes support list/get/create, immutable revision-on-update, and activation. Company routes find or create a shared identity by normalized domain, attach it to a tenant, and expose updates only for tenant-private relationship fields. Create/update actions emit an `AuditLog` in the same transaction.
+Product routes support list/get/create/update and activation. ICP routes support list/get/create, immutable revision-on-update, and activation. Company routes reuse shared identity by normalized domain while tenant-private lifecycle state and notes remain isolated. Facts are append-only observations with provenance/classification and evidence. CSV import supports a non-mutating preview, deterministic validation, duplicate-domain reuse, and conservative shared-field updates. Meaningful writes emit `AuditLog` records without storing full CSV contents.
 
-Deferred: registration, MFA, SSO/OAuth, password recovery, token revocation/refresh, organization administration, public APIs, providers, research, campaigns, outreach, billing, and AI features.
+Deferred: registration, MFA, SSO/OAuth, password recovery, token revocation/refresh, organization administration, external providers, automated/public-web/AI research, contacts, campaigns, outreach, billing, commercial APIs, background jobs, RLS, and deployment.
