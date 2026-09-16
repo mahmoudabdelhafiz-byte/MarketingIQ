@@ -111,3 +111,4 @@ class AutomationPolicyRun(Base):
     executed_steps: Mapped[Any] = mapped_column(JSON, default=list)
     error_code: Mapped[str | None] = mapped_column(String(100))
     run_as_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    triggered_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), index=True)
