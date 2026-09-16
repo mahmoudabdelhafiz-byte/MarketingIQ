@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from marketingiq.api.ai_campaign_routes import register_ai_campaign_routes
 from marketingiq.api.automation_policy_routes import register_automation_policy_routes
 from marketingiq.api.learning_routes import register_learning_routes
 from marketingiq.api.orchestration_routes import register_orchestration_routes
@@ -130,6 +131,7 @@ def register_campaign_routes(
             _campaign_review_output(item) for item in svc.history(relationship_id, draft_id)
         ]
 
+    register_ai_campaign_routes(app, prefix, tenant_dependency, session_dependency)
     register_outbound_routes(app, prefix, tenant_dependency, session_dependency)
     register_pipeline_routes(app, prefix, tenant_dependency, session_dependency)
     register_learning_routes(app, prefix, tenant_dependency, session_dependency)
