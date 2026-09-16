@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
-from typing import Annotated
 
 from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
@@ -47,37 +46,52 @@ def register_automation_policy_routes(
     provider_registry_getter: Callable[[], ProviderRegistry],
 ) -> None:
     def policy_service(
-        context: Annotated[TenantContext, Depends(tenant_dependency)],
-        db: Annotated[Session, Depends(session_dependency)],
+        context: TenantContext = Depends(tenant_dependency),
+        db: Session = Depends(session_dependency),
     ) -> AutomationPolicyService:
         return AutomationPolicyService(db, context, provider_registry_getter())
 
-    Service = Annotated[AutomationPolicyService, Depends(policy_service)]
     base = prefix + "/automation-policies"
 
     @app.get(base)
-    def list_policies(svc: Service):
+    def list_policies(svc: AutomationPolicyService = Depends(policy_service)):
         return [_policy_output(item) for item in svc.list()]
 
     @app.post(base, status_code=201)
-    def create_policy(svc: Service, body: AutomationPolicyCreateRequest):
+    def create_policy(
+        body: AutomationPolicyCreateRequest,
+        svc: AutomationPolicyService = Depends(policy_service),
+    ):
         return _policy_output(svc.create(**body.model_dump()))
 
     @app.post(base + "/run-due")
-    def run_due_policies(svc: Service, body: RunDuePoliciesRequest):
+    def run_due_policies(
+        body: RunDuePoliciesRequest,
+        svc: AutomationPolicyService = Depends(policy_service),
+    ):
         return [_run_output(item) for item in svc.run_due(limit=body.limit)]
 
     @app.get(base + "/{policy_id}")
-    def get_policy(svc: Service, policy_id: str):
+    def get_policy(
+        policy_id: str,
+        svc: AutomationPolicyService = Depends(policy_service),
+    ):
         return _policy_output(svc.get(policy_id))
 
     @app.patch(base + "/{policy_id}")
-    def update_policy(svc: Service, policy_id: str, body: AutomationPolicyUpdateRequest):
+    def update_policy(
+        policy_id: str,
+        body: AutomationPolicyUpdateRequest,
+        svc: AutomationPolicyService = Depends(policy_service),
+    ):
         changes = body.model_dump(exclude_unset=True)
         return _policy_output(svc.update(policy_id, changes))
 
     @app.get(base + "/{policy_id}/runs")
-    def policy_runs(svc: Service, policy_id: str):
+    def policy_runs(
+        policy_id: str,
+        svc: AutomationPolicyService = Depends(policy_service),
+    ):
         return [_run_output(item) for item in svc.runs(policy_id)]
 
 
