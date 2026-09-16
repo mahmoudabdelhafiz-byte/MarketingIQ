@@ -9,13 +9,27 @@ from marketingiq.application.authorization import Permission, require_permission
 from marketingiq.application.errors import ConflictError, NotFoundError
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.campaigns import CampaignDraft
-from marketingiq.domain.engagement import EngagementEventType, EngagementSource, OutreachEngagementEvent
+from marketingiq.domain.engagement import (
+    EngagementEventType,
+    EngagementSource,
+    OutreachEngagementEvent,
+)
 from marketingiq.domain.models import AuditLog, ContactEmail, OrganizationCompany
-from marketingiq.domain.outbound import OutboundSendAttempt, OutboundSendStatus, SuppressionEntry, SuppressionSource
+from marketingiq.domain.outbound import (
+    OutboundSendAttempt,
+    OutboundSendStatus,
+    SuppressionEntry,
+    SuppressionSource,
+)
 
 
 class OutreachEngagementService:
-    def __init__(self, session: Session, tenant: TenantContext, now: datetime | None = None) -> None:
+    def __init__(
+        self,
+        session: Session,
+        tenant: TenantContext,
+        now: datetime | None = None,
+    ) -> None:
         self.session = session
         self.tenant = tenant
         self.now = now or datetime.now(UTC)
@@ -30,10 +44,11 @@ class OutreachEngagementService:
         source: EngagementSource = EngagementSource.MANUAL,
         reason_code: str | None = None,
         occurred_at: datetime | None = None,
+        draft_id: str | None = None,
     ) -> OutreachEngagementEvent:
         require_permission(self.tenant, Permission.RECORD_ENGAGEMENT)
         relationship = self._relationship(relationship_id)
-        attempt = self._attempt(relationship, attempt_id)
+        attempt = self._attempt(relationship, attempt_id, draft_id)
         if attempt.status != OutboundSendStatus.SENT:
             raise ConflictError("ENGAGEMENT_REQUIRES_SENT_ATTEMPT")
 
@@ -107,10 +122,16 @@ class OutreachEngagementService:
         )
         return event
 
-    def list(self, relationship_id: str, attempt_id: str) -> list[OutreachEngagementEvent]:
+    def list(
+        self,
+        relationship_id: str,
+        attempt_id: str,
+        *,
+        draft_id: str | None = None,
+    ) -> list[OutreachEngagementEvent]:
         require_permission(self.tenant, Permission.READ)
         relationship = self._relationship(relationship_id)
-        attempt = self._attempt(relationship, attempt_id)
+        attempt = self._attempt(relationship, attempt_id, draft_id)
         return list(
             self.session.scalars(
                 select(OutreachEngagementEvent)
@@ -119,13 +140,22 @@ class OutreachEngagementService:
                     OutreachEngagementEvent.organization_company_id == relationship.id,
                     OutreachEngagementEvent.send_attempt_id == attempt.id,
                 )
-                .order_by(OutreachEngagementEvent.occurred_at, OutreachEngagementEvent.id)
+                .order_by(
+                    OutreachEngagementEvent.occurred_at,
+                    OutreachEngagementEvent.id,
+                )
             )
         )
 
-    def summary(self, relationship_id: str, attempt_id: str) -> dict:
-        attempt = self._attempt(self._relationship(relationship_id), attempt_id)
-        events = self.list(relationship_id, attempt_id)
+    def summary(
+        self,
+        relationship_id: str,
+        attempt_id: str,
+        *,
+        draft_id: str | None = None,
+    ) -> dict:
+        attempt = self._attempt(self._relationship(relationship_id), attempt_id, draft_id)
+        events = self.list(relationship_id, attempt_id, draft_id=draft_id)
         types = [item.event_type for item in events]
         delivery_status = "SENT"
         if EngagementEventType.BOUNCED in types:
@@ -170,21 +200,29 @@ class OutreachEngagementService:
             raise NotFoundError("Company relationship not found")
         return item
 
-    def _attempt(self, relationship: OrganizationCompany, attempt_id: str) -> OutboundSendAttempt:
-        attempt = self.session.scalar(
-            select(OutboundSendAttempt).where(
-                OutboundSendAttempt.id == attempt_id,
-                OutboundSendAttempt.organization_id == self.tenant.organization_id,
-                OutboundSendAttempt.organization_company_id == relationship.id,
-                OutboundSendAttempt.company_id == relationship.company_id,
-            )
-        )
+    def _attempt(
+        self,
+        relationship: OrganizationCompany,
+        attempt_id: str,
+        draft_id: str | None = None,
+    ) -> OutboundSendAttempt:
+        conditions = [
+            OutboundSendAttempt.id == attempt_id,
+            OutboundSendAttempt.organization_id == self.tenant.organization_id,
+            OutboundSendAttempt.organization_company_id == relationship.id,
+            OutboundSendAttempt.company_id == relationship.company_id,
+        ]
+        if draft_id is not None:
+            conditions.append(OutboundSendAttempt.draft_id == draft_id)
+        attempt = self.session.scalar(select(OutboundSendAttempt).where(*conditions))
         if attempt is None:
             raise NotFoundError("Outbound send attempt not found")
         return attempt
 
     def _suppress_recipient(
-        self, attempt: OutboundSendAttempt, event_type: EngagementEventType
+        self,
+        attempt: OutboundSendAttempt,
+        event_type: EngagementEventType,
     ) -> None:
         email = self.session.get(ContactEmail, attempt.contact_email_id)
         if email is None:
