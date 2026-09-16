@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from marketingiq.api.outbound_routes import register_outbound_routes
 from marketingiq.application.campaigns import CampaignDraftService
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.campaigns import CampaignChannel
@@ -124,6 +125,8 @@ def register_campaign_routes(
         return [
             _campaign_review_output(item) for item in svc.history(relationship_id, draft_id)
         ]
+
+    register_outbound_routes(app, prefix, tenant_dependency, session_dependency)
 
 
 def _campaign_draft_output(item, svc: CampaignDraftService) -> dict[str, Any]:
