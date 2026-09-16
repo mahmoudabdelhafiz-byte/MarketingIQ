@@ -92,7 +92,9 @@ def test_bounce_and_opt_out_create_suppression_without_email_in_audit(session):
     assert suppression.source == SuppressionSource.BOUNCE
     assert suppression.email_normalized == seeded["email"].email
 
-    audit = session.scalar(select(AuditLog).where(AuditLog.action == "outreach_engagement.recorded"))
+    audit = session.scalar(
+        select(AuditLog).where(AuditLog.action == "outreach_engagement.recorded")
+    )
     assert audit is not None
     assert seeded["email"].email not in str(audit.metadata_json)
 
