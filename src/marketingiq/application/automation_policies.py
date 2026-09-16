@@ -342,6 +342,8 @@ class ScheduledAutomationExecutor:
         tenant = self._execution_tenant(policy)
         if tenant is None:
             self._finish_failure(policy, run, "AUTOMATION_RUN_AS_PERMISSION_DENIED")
+            self._audit_run(policy, run)
+            self.session.flush()
             return run
 
         try:
@@ -411,8 +413,6 @@ class ScheduledAutomationExecutor:
         run.completed_at = self.now
         policy.last_status = run.status.value
         policy.last_error_code = error_code
-        self._audit_run(policy, run)
-        self.session.flush()
 
     def _audit_run(self, policy: AutomationPolicy, run: AutomationPolicyRun) -> None:
         self.session.add(
