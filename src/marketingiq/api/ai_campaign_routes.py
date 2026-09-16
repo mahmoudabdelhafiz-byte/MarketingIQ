@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from marketingiq.api.campaign_routes import _campaign_draft_output
 from marketingiq.application.ai_campaigns import GroundedAICampaignService
 from marketingiq.application.campaigns import CampaignDraftService
 from marketingiq.application.tenant import TenantContext
@@ -53,3 +53,37 @@ def register_ai_campaign_routes(
     def campaign_ai_status(context: TenantContext = Depends(tenant_dependency)):
         provider = OpenAICampaignAIProvider()
         return provider.status()
+
+
+def _campaign_draft_output(item, svc: CampaignDraftService) -> dict[str, Any]:
+    state = svc.effective_state_for(item)
+    return {
+        "id": item.id,
+        "organization_id": item.organization_id,
+        "organization_company_id": item.organization_company_id,
+        "company_id": item.company_id,
+        "product_id": item.product_id,
+        "qualification_id": item.qualification_id,
+        "contact_id": item.contact_id,
+        "channel": item.channel,
+        "status": state["status"],
+        "subject": state["subject"],
+        "body": state["body"],
+        "call_to_action": state["call_to_action"],
+        "revision_number": state["revision_number"],
+        "last_review_action": state["last_action"],
+        "last_review_at": state["last_action_at"],
+        "generated_content": {
+            "subject": item.subject,
+            "body": item.body,
+            "call_to_action": item.call_to_action,
+        },
+        "message_angle": item.message_angle,
+        "personalization_snapshot": item.personalization_snapshot,
+        "evidence_snapshot": item.evidence_snapshot,
+        "workflow_version": item.workflow_version,
+        "created_by_user_id": item.created_by_user_id,
+        "created_at": item.created_at,
+        "classification": item.classification,
+        "redistribution_status": item.redistribution_status,
+    }
