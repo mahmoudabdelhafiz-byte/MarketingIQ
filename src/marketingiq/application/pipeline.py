@@ -10,13 +10,13 @@ from marketingiq.application.errors import ConflictError, NotFoundError
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.campaigns import CampaignDraft
 from marketingiq.domain.engagement import EngagementEventType, OutreachEngagementEvent
+from marketingiq.domain.models import AuditLog, OrganizationCompany
 from marketingiq.domain.outbound import OutboundSendAttempt, OutboundSendStatus
 from marketingiq.domain.pipeline import (
     OpportunityStage,
     SalesOpportunity,
     SalesOpportunityStageEvent,
 )
-from marketingiq.domain.models import AuditLog, OrganizationCompany
 
 
 STAGE_ORDER = {
@@ -225,7 +225,9 @@ class SalesPipelineService:
             )
             .limit(1)
         )
-        return OpportunityStage.RESPONDED if has_reply is not None else OpportunityStage.CONTACTED
+        if has_reply is not None:
+            return OpportunityStage.RESPONDED
+        return OpportunityStage.CONTACTED
 
     def _append_stage_event(
         self,
