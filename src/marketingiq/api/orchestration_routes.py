@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from marketingiq.application.authorization import Permission, require_permission
 from marketingiq.application.orchestration import (
     AutomationOrchestrationService,
     OrchestrationStep,
@@ -74,6 +75,7 @@ def register_orchestration_routes(
         product_id: str,
         body: OrchestrationRunRequest,
     ):
+        require_permission(svc.tenant, Permission.RUN_PUBLIC_RESEARCH)
         return svc.run_until_gate(
             relationship_id,
             product_id,
