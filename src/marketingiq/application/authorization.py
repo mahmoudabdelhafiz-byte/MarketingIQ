@@ -21,6 +21,7 @@ class Permission(StrEnum):
     SEND_OUTBOUND_EMAIL = "SEND_OUTBOUND_EMAIL"
     MANAGE_OUTBOUND_SUPPRESSIONS = "MANAGE_OUTBOUND_SUPPRESSIONS"
     RECORD_ENGAGEMENT = "RECORD_ENGAGEMENT"
+    MANAGE_PIPELINE = "MANAGE_PIPELINE"
 
 
 ROLE_PERMISSIONS = {
@@ -38,6 +39,7 @@ ROLE_PERMISSIONS = {
             Permission.SEND_OUTBOUND_EMAIL,
             Permission.MANAGE_OUTBOUND_SUPPRESSIONS,
             Permission.RECORD_ENGAGEMENT,
+            Permission.MANAGE_PIPELINE,
         }
     ),
     MembershipRole.READ_ONLY: frozenset({Permission.READ}),
