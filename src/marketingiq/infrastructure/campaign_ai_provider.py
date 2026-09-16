@@ -113,10 +113,16 @@ def _prompt(request: CampaignAIRequest) -> str:
     instructions = {
         "task": "Draft a concise B2B introduction email using only the supplied facts.",
         "rules": [
-            "Do not invent pain points, budgets, projects, timing, intent, results, metrics, or relationships.",
+            (
+                "Do not invent pain points, budgets, projects, timing, intent, results, "
+                "metrics, or relationships."
+            ),
             "Do not claim the recipient has a problem unless an approved fact explicitly says so.",
             "Do not introduce any company fact not present in approved_facts.",
-            "The product value proposition may be rephrased but not expanded with new capabilities.",
+            (
+                "The product value proposition may be rephrased but not expanded with "
+                "new capabilities."
+            ),
             "Keep the tone professional, specific, and non-manipulative.",
             "Return JSON only with keys subject, body, used_fact_keys.",
             "used_fact_keys must contain only keys actually referenced in the copy.",
