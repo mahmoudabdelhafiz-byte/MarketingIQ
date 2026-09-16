@@ -22,11 +22,36 @@ def upgrade() -> None:
     op.create_table(
         "campaign_ai_generation_attempts",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("organization_id", sa.String(36), sa.ForeignKey("organizations.id"), nullable=False),
-        sa.Column("organization_company_id", sa.String(36), sa.ForeignKey("organization_companies.id"), nullable=False),
-        sa.Column("qualification_id", sa.String(36), sa.ForeignKey("lead_qualifications.id"), nullable=False),
-        sa.Column("contact_id", sa.String(36), sa.ForeignKey("contact_candidates.id"), nullable=False),
-        sa.Column("draft_id", sa.String(36), sa.ForeignKey("campaign_drafts.id"), nullable=True),
+        sa.Column(
+            "organization_id",
+            sa.String(36),
+            sa.ForeignKey("organizations.id"),
+            nullable=False,
+        ),
+        sa.Column(
+            "organization_company_id",
+            sa.String(36),
+            sa.ForeignKey("organization_companies.id"),
+            nullable=False,
+        ),
+        sa.Column(
+            "qualification_id",
+            sa.String(36),
+            sa.ForeignKey("lead_qualifications.id"),
+            nullable=False,
+        ),
+        sa.Column(
+            "contact_id",
+            sa.String(36),
+            sa.ForeignKey("contact_candidates.id"),
+            nullable=False,
+        ),
+        sa.Column(
+            "draft_id",
+            sa.String(36),
+            sa.ForeignKey("campaign_drafts.id"),
+            nullable=True,
+        ),
         sa.Column("provider_key", sa.String(100), nullable=False),
         sa.Column("model", sa.String(150), nullable=False),
         sa.Column("prompt_version", sa.String(100), nullable=False),
@@ -40,7 +65,12 @@ def upgrade() -> None:
         sa.Column("fallback_used", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("requested_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_by_user_id", sa.String(36), sa.ForeignKey("users.id"), nullable=False),
+        sa.Column(
+            "created_by_user_id",
+            sa.String(36),
+            sa.ForeignKey("users.id"),
+            nullable=False,
+        ),
     )
     for column in (
         "organization_id",
