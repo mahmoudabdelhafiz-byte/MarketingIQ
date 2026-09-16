@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import Any
 
 from sqlalchemy import select
@@ -15,7 +14,6 @@ from marketingiq.domain.pipeline import (
     SalesOpportunity,
     SalesOpportunityStageEvent,
 )
-
 
 FUNNEL_STAGES = (
     OpportunityStage.CONTACTED,
@@ -85,10 +83,10 @@ class ConversionIntelligenceService:
         opportunities = self._opportunities(product_id)
         reached = self._reached(opportunities)
         values = self._dimension_values(opportunities, dimension)
-        grouped: dict[str, list[SalesOpportunity]] = defaultdict(list)
+        grouped: dict[str, list[SalesOpportunity]] = {}
         for opportunity in opportunities:
             value = values.get(opportunity.id) or "UNKNOWN"
-            grouped[value].append(opportunity)
+            grouped.setdefault(value, []).append(opportunity)
 
         result: list[dict[str, Any]] = []
         for value, items in grouped.items():
@@ -113,7 +111,8 @@ class ConversionIntelligenceService:
         )
         if product_id is not None:
             query = query.where(SalesOpportunity.product_id == product_id)
-        return list(self.session.scalars(query.order_by(SalesOpportunity.created_at, SalesOpportunity.id)))
+        ordered = query.order_by(SalesOpportunity.created_at, SalesOpportunity.id)
+        return list(self.session.scalars(ordered))
 
     def _reached(
         self, opportunities: list[SalesOpportunity]
