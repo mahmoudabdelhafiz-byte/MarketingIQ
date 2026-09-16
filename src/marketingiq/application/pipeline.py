@@ -9,9 +9,15 @@ from marketingiq.application.authorization import Permission, require_permission
 from marketingiq.application.errors import ConflictError, NotFoundError
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.campaigns import CampaignDraft
-from marketingiq.domain.engagement import EngagementEventType, OutreachEngagementEvent
+from marketingiq.domain.engagement import (
+    EngagementEventType,
+    OutreachEngagementEvent,
+)
 from marketingiq.domain.models import AuditLog, OrganizationCompany
-from marketingiq.domain.outbound import OutboundSendAttempt, OutboundSendStatus
+from marketingiq.domain.outbound import (
+    OutboundSendAttempt,
+    OutboundSendStatus,
+)
 from marketingiq.domain.pipeline import (
     OpportunityStage,
     SalesOpportunity,
