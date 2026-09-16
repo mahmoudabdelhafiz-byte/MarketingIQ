@@ -216,7 +216,7 @@ class AutomationOrchestrationService:
                 or qualification.status not in ACTIONABLE_QUALIFICATION_STATUSES
             ):
                 raise ConflictError("ORCHESTRATION_ACTIONABLE_QUALIFICATION_REQUIRED")
-            result = ContactDiscoveryService(
+            ContactDiscoveryService(
                 self.session, self.tenant, self.provider_registry
             ).discover(
                 relationship_id,
@@ -283,7 +283,6 @@ class AutomationOrchestrationService:
             select(Product).where(
                 Product.id == product_id,
                 Product.organization_id == self.tenant.organization_id,
-                Product.is_active.is_(True),
             )
         )
         if item is None:
