@@ -42,6 +42,12 @@ class OutreachEngagementEvent(Base):
             "event_key",
             name="uq_outreach_engagement_org_event_key",
         ),
+        UniqueConstraint(
+            "organization_id",
+            "provider_key",
+            "provider_event_id",
+            name="uq_outreach_engagement_provider_event",
+        ),
         Index(
             "ix_outreach_engagement_tenant_attempt_time",
             "organization_id",
@@ -81,8 +87,12 @@ class OutreachEngagementEvent(Base):
             create_constraint=True,
         )
     )
+    provider_key: Mapped[str | None] = mapped_column(String(50), index=True)
+    provider_event_id: Mapped[str | None] = mapped_column(String(150), index=True)
     reason_code: Mapped[str | None] = mapped_column(String(100))
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    recorded_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    recorded_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"), index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
