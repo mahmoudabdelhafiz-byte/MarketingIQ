@@ -12,10 +12,12 @@ The repository contains the Sprint 1 domain foundation and a thin authenticated 
 
 ## Stack
 
-The V1 architecture is a Python 3.12 modular monolith using SQLAlchemy 2, Alembic and
-PostgreSQL. A single deployable keeps operations and hosting costs modest, while domain,
-application and infrastructure modules keep future HTTP, worker and provider adapters from
-owning business rules. SQLite is used only by isolated unit tests.
+The V1 architecture is a Python 3.12 modular monolith using SQLAlchemy 2, Alembic and MySQL 8
+through the pure-Python PyMySQL driver. This keeps the production database compatible with the
+initial shared-hosting target without requiring native database client compilation. A single
+deployable keeps operations and hosting costs modest, while domain, application and
+infrastructure modules keep future HTTP, worker and provider adapters from owning business rules.
+SQLite is used only by isolated unit tests.
 
 ## Local setup
 
@@ -24,16 +26,21 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
 cp .env.example .env                 # replace every placeholder locally
-export DATABASE_URL='postgresql+psycopg://...'
+export DATABASE_URL='mysql+pymysql://USER:PASSWORD@HOST:3306/DATABASE?charset=utf8mb4'
 alembic upgrade head
 uvicorn 'marketingiq.api.app:create_app' --factory
 pytest
 ruff check .
 ```
 
+URL-encode special characters in database usernames/passwords before putting them in
+`DATABASE_URL`. `DB_POOL_RECYCLE_SECONDS` defaults to 280 seconds to reduce stale-connection
+errors common on shared MySQL hosting; `pool_pre_ping` is always enabled.
+
 No secret or provider key belongs in Git. Development reads environment variables; hosted
 environments should inject secrets from their native secret manager with separate credentials
-per environment. Database roles should have only application-schema privileges.
+per environment. Database users should have only the privileges required by the application
+schema.
 
 ## Documentation
 
@@ -42,6 +49,7 @@ per environment. Database roles should have only application-schema privileges.
 - [Sprint boundaries](docs/sprint-boundaries.md)
 - [Company repository and CSV import](docs/company-repository.md)
 - [ADR 0001: modular monolith and shared company identity](docs/adr/0001-foundation.md)
+- [ADR 0002: MySQL production database for shared hosting](docs/adr/0002-mysql-shared-hosting.md)
 
 ## Seed data
 
