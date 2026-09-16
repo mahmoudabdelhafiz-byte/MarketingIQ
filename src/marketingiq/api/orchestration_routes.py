@@ -20,6 +20,13 @@ class OrchestrationExecuteRequest(BaseModel):
     max_contacts: int = Field(default=10, ge=1, le=50)
 
 
+class OrchestrationRunRequest(BaseModel):
+    allow_provider_credits: bool = False
+    contact_provider: str = "HUNTER"
+    max_contacts: int = Field(default=10, ge=1, le=50)
+    max_steps: int = Field(default=4, ge=1, le=4)
+
+
 def register_orchestration_routes(
     app: FastAPI,
     prefix: str,
@@ -58,4 +65,20 @@ def register_orchestration_routes(
             allow_provider_credits=body.allow_provider_credits,
             contact_provider=body.contact_provider,
             max_contacts=body.max_contacts,
+        )
+
+    @app.post(base + "/run")
+    def run(
+        svc: Service,
+        relationship_id: str,
+        product_id: str,
+        body: OrchestrationRunRequest,
+    ):
+        return svc.run_until_gate(
+            relationship_id,
+            product_id,
+            allow_provider_credits=body.allow_provider_credits,
+            contact_provider=body.contact_provider,
+            max_contacts=body.max_contacts,
+            max_steps=body.max_steps,
         )
