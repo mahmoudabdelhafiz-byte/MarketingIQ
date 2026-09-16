@@ -17,6 +17,7 @@ class Permission(StrEnum):
     MANAGE_BUYER_ROLES = "MANAGE_BUYER_ROLES"
     SPEND_PROVIDER_CREDITS = "SPEND_PROVIDER_CREDITS"
     GENERATE_CAMPAIGN_DRAFT = "GENERATE_CAMPAIGN_DRAFT"
+    REVIEW_CAMPAIGN_DRAFT = "REVIEW_CAMPAIGN_DRAFT"
 
 
 ROLE_PERMISSIONS = {
@@ -30,6 +31,7 @@ ROLE_PERMISSIONS = {
             Permission.RUN_QUALIFICATION,
             Permission.SPEND_PROVIDER_CREDITS,
             Permission.GENERATE_CAMPAIGN_DRAFT,
+            Permission.REVIEW_CAMPAIGN_DRAFT,
         }
     ),
     MembershipRole.READ_ONLY: frozenset({Permission.READ}),
