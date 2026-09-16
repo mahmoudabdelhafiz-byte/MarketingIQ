@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Annotated, Any
+from typing import Any
 
 from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
@@ -34,12 +34,11 @@ def register_outbound_routes(
         app.state.outbound_sender_registry = OutboundSenderRegistry([SMTPEmailSender()])
 
     def outbound_service(
-        context: Annotated[TenantContext, Depends(tenant_dependency)],
-        db: Annotated[Session, Depends(session_dependency)],
+        context: TenantContext = Depends(tenant_dependency),
+        db: Session = Depends(session_dependency),
     ) -> OutboundSendService:
         return OutboundSendService(db, context, app.state.outbound_sender_registry)
 
-    OutboundService = Annotated[OutboundSendService, Depends(outbound_service)]
     draft_prefix = prefix + "/companies/{relationship_id}/campaign-drafts/{draft_id}"
 
     @app.post(draft_prefix + "/send", status_code=201)
@@ -47,7 +46,7 @@ def register_outbound_routes(
         relationship_id: str,
         draft_id: str,
         body: OutboundSendRequest,
-        svc: OutboundService,
+        svc: OutboundSendService = Depends(outbound_service),
     ):
         return _attempt_output(
             svc.send(
@@ -62,22 +61,27 @@ def register_outbound_routes(
     def campaign_send_attempts(
         relationship_id: str,
         draft_id: str,
-        svc: OutboundService,
+        svc: OutboundSendService = Depends(outbound_service),
     ):
         return [_attempt_output(item) for item in svc.list_attempts(relationship_id, draft_id)]
 
     @app.post(prefix + "/outbound/suppressions", status_code=201)
-    def create_suppression(body: SuppressionRequest, svc: OutboundService):
+    def create_suppression(
+        body: SuppressionRequest,
+        svc: OutboundSendService = Depends(outbound_service),
+    ):
         return _suppression_output(
             svc.suppress(body.email, reason=body.reason, source=body.source)
         )
 
     @app.get(prefix + "/outbound/suppressions")
-    def suppressions(svc: OutboundService):
+    def suppressions(svc: OutboundSendService = Depends(outbound_service)):
         return [_suppression_output(item) for item in svc.list_suppressions()]
 
     @app.get(prefix + "/outbound/providers/status")
-    def outbound_provider_status(svc: OutboundService):
+    def outbound_provider_status(
+        svc: OutboundSendService = Depends(outbound_service),
+    ):
         return svc.provider_status()
 
 
