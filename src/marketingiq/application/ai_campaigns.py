@@ -14,8 +14,8 @@ from marketingiq.application.campaigns import (
 from marketingiq.application.errors import ConflictError, NotFoundError
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.campaign_ai import (
-    CampaignAIGenerationAttempt,
     CampaignAIAttemptStatus,
+    CampaignAIGenerationAttempt,
     CampaignAIProvider,
     CampaignAIProviderError,
     CampaignAIRequest,
@@ -297,7 +297,7 @@ class GroundedAICampaignService:
 
 
 def _safe_fact_value(value) -> str:
-    if isinstance(value, (str, int, float, bool)):
+    if isinstance(value, str | int | float | bool):
         return str(value)[:500]
     if isinstance(value, list):
         return ", ".join(str(item) for item in value[:10])[:500]
