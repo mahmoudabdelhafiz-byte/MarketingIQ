@@ -41,5 +41,6 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/marketingiq/api/app.py" = ["B008"]
+"src/marketingiq/api/ai_campaign_routes.py" = ["B008"]
 "src/marketingiq/api/automation_policy_routes.py" = ["B008"]
 "src/marketingiq/api/campaign_routes.py" = ["B008"]
