@@ -124,6 +124,9 @@ def register_pipeline_routes(
 
 
 def _opportunity_output(item) -> dict[str, Any]:
+    estimated_value = None
+    if item.estimated_value is not None:
+        estimated_value = float(item.estimated_value)
     return {
         "id": item.id,
         "organization_id": item.organization_id,
@@ -135,7 +138,7 @@ def _opportunity_output(item) -> dict[str, Any]:
         "draft_id": item.draft_id,
         "send_attempt_id": item.send_attempt_id,
         "stage": item.stage,
-        "estimated_value": float(item.estimated_value) if item.estimated_value is not None else None,
+        "estimated_value": estimated_value,
         "currency": item.currency,
         "next_action": item.next_action,
         "owner_user_id": item.owner_user_id,
