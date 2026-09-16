@@ -47,17 +47,17 @@ def register_engagement_routes(
         body: EngagementRecordRequest,
         svc: EngagementService,
     ):
-        event = svc.record(
-            relationship_id,
-            attempt_id,
-            event_type=body.event_type,
-            event_key=body.event_key,
-            reason_code=body.reason_code,
-            occurred_at=body.occurred_at,
+        return _event_output(
+            svc.record(
+                relationship_id,
+                attempt_id,
+                event_type=body.event_type,
+                event_key=body.event_key,
+                reason_code=body.reason_code,
+                occurred_at=body.occurred_at,
+                draft_id=draft_id,
+            )
         )
-        if event.draft_id != draft_id:
-            raise ValueError("send attempt does not belong to this campaign draft")
-        return _event_output(event)
 
     @app.get(base)
     def engagement_history(
@@ -66,10 +66,10 @@ def register_engagement_routes(
         attempt_id: str,
         svc: EngagementService,
     ):
-        events = svc.list(relationship_id, attempt_id)
-        if events and events[0].draft_id != draft_id:
-            raise ValueError("send attempt does not belong to this campaign draft")
-        return [_event_output(item) for item in events]
+        return [
+            _event_output(item)
+            for item in svc.list(relationship_id, attempt_id, draft_id=draft_id)
+        ]
 
     @app.get(base + "/summary")
     def engagement_summary(
@@ -78,10 +78,7 @@ def register_engagement_routes(
         attempt_id: str,
         svc: EngagementService,
     ):
-        events = svc.list(relationship_id, attempt_id)
-        if events and events[0].draft_id != draft_id:
-            raise ValueError("send attempt does not belong to this campaign draft")
-        return svc.summary(relationship_id, attempt_id)
+        return svc.summary(relationship_id, attempt_id, draft_id=draft_id)
 
 
 def _event_output(item) -> dict[str, Any]:
