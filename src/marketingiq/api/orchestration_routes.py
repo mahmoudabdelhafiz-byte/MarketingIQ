@@ -1,0 +1,63 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Annotated
+
+from fastapi import Depends, FastAPI
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from marketingiq.application.orchestration import (
+    AutomationOrchestrationService,
+    OrchestrationStep,
+)
+from marketingiq.application.research import ProviderRegistry
+from marketingiq.application.tenant import TenantContext
+
+
+class OrchestrationExecuteRequest(BaseModel):
+    step: OrchestrationStep
+    allow_provider_credits: bool = False
+    contact_provider: str = "HUNTER"
+    max_contacts: int = Field(default=10, ge=1, le=50)
+
+
+def register_orchestration_routes(
+    app: FastAPI,
+    prefix: str,
+    tenant_dependency: Callable[..., TenantContext],
+    session_dependency: Callable[..., Session],
+    provider_registry_getter: Callable[[], ProviderRegistry],
+) -> None:
+    def orchestration_service(
+        context: Annotated[TenantContext, Depends(tenant_dependency)],
+        db: Annotated[Session, Depends(session_dependency)],
+    ) -> AutomationOrchestrationService:
+        return AutomationOrchestrationService(db, context, provider_registry_getter())
+
+    Service = Annotated[AutomationOrchestrationService, Depends(orchestration_service)]
+    base = prefix + "/companies/{relationship_id}/automation"
+
+    @app.get(base + "/plan")
+    def plan(
+        relationship_id: str,
+        product_id: str,
+        svc: Service,
+    ):
+        return svc.plan(relationship_id, product_id)
+
+    @app.post(base + "/execute")
+    def execute(
+        relationship_id: str,
+        product_id: str,
+        body: OrchestrationExecuteRequest,
+        svc: Service,
+    ):
+        return svc.execute_step(
+            relationship_id,
+            product_id,
+            body.step,
+            allow_provider_credits=body.allow_provider_credits,
+            contact_provider=body.contact_provider,
+            max_contacts=body.max_contacts,
+        )
