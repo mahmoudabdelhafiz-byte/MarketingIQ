@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import Annotated
 
@@ -40,18 +38,18 @@ def register_orchestration_routes(
 
     @app.get(base + "/plan")
     def plan(
+        svc: Service,
         relationship_id: str,
         product_id: str,
-        svc: Service,
     ):
         return svc.plan(relationship_id, product_id)
 
     @app.post(base + "/execute")
     def execute(
+        svc: Service,
         relationship_id: str,
         product_id: str,
         body: OrchestrationExecuteRequest,
-        svc: Service,
     ):
         return svc.execute_step(
             relationship_id,
