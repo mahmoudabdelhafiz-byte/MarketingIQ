@@ -4,9 +4,21 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
+from test_campaigns import (
+    NOW,
+    SECRET,
+    login,
+    seed_api_database,
+    seed_campaign,
+    service_for,
+)
 
 from marketingiq.api.app import create_app
-from marketingiq.application.errors import AuthorizationError, ConflictError, NotFoundError
+from marketingiq.application.errors import (
+    AuthorizationError,
+    ConflictError,
+    NotFoundError,
+)
 from marketingiq.domain.campaigns import (
     CampaignDraftReviewEvent,
     CampaignDraftStatus,
@@ -18,14 +30,6 @@ from marketingiq.domain.models import (
     DataClassification,
     MembershipRole,
     RedistributionStatus,
-)
-from test_campaigns import (
-    NOW,
-    SECRET,
-    login,
-    seed_api_database,
-    seed_campaign,
-    service_for,
 )
 
 
