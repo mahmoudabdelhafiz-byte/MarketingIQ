@@ -43,9 +43,8 @@ class OrchestrationStep(StrEnum):
 class AutomationOrchestrationService:
     """Coordinate existing MarketingIQ services without bypassing their safeguards.
 
-    The foundation is intentionally one-step-at-a-time. It can plan the next safe
-    action and execute one explicitly requested step. It never generates, approves,
-    or sends outreach and never spends provider credits without an explicit flag.
+    Planning and execution deliberately stop before campaign generation, approval,
+    and outbound send. Provider-credit use is always explicit.
     """
 
     def __init__(
@@ -250,6 +249,92 @@ class AutomationOrchestrationService:
             "step": step.value,
             "result_id": result_id,
             "plan": self.plan(relationship_id, product_id),
+        }
+
+    def run_until_gate(
+        self,
+        relationship_id: str,
+        product_id: str,
+        *,
+        allow_provider_credits: bool = False,
+        contact_provider: str = "HUNTER",
+        max_contacts: int = 10,
+        max_steps: int = 4,
+    ) -> dict[str, Any]:
+        """Advance deterministic safe steps, stopping at an explicit gate.
+
+        A step is executed at most once per run. This prevents loops when public
+        research remains advisable but does not materially change fit inputs.
+        """
+        if max_steps < 1 or max_steps > 4:
+            raise ValueError("max_steps must be between 1 and 4")
+
+        executed_steps: list[dict[str, Any]] = []
+        executed_names: set[str] = set()
+        stop_reason = "NO_READY_STEP"
+
+        for _ in range(max_steps):
+            current = self.plan(relationship_id, product_id)
+            if current["state"] == "READY_FOR_HUMAN_CAMPAIGN_REVIEW":
+                stop_reason = "HUMAN_CAMPAIGN_GATE"
+                break
+
+            next_item = next(
+                (
+                    item
+                    for item in current["steps"]
+                    if item["status"] == "READY" and item["step"] not in executed_names
+                ),
+                None,
+            )
+            if next_item is None:
+                stop_reason = "NO_READY_STEP"
+                break
+
+            step = OrchestrationStep(next_item["step"])
+            if step == OrchestrationStep.DISCOVER_CONTACTS and not allow_provider_credits:
+                stop_reason = "PROVIDER_CREDIT_APPROVAL_REQUIRED"
+                break
+
+            result = self.execute_step(
+                relationship_id,
+                product_id,
+                step,
+                allow_provider_credits=allow_provider_credits,
+                contact_provider=contact_provider,
+                max_contacts=max_contacts,
+            )
+            executed_names.add(step.value)
+            executed_steps.append({"step": step.value, "result_id": result["result_id"]})
+        else:
+            stop_reason = "MAX_STEPS_REACHED"
+
+        final_plan = self.plan(relationship_id, product_id)
+        if final_plan["state"] == "READY_FOR_HUMAN_CAMPAIGN_REVIEW":
+            stop_reason = "HUMAN_CAMPAIGN_GATE"
+
+        self.session.add(
+            AuditLog(
+                organization_id=self.tenant.organization_id,
+                actor_user_id=self.tenant.actor_user_id,
+                action="automation.run.completed",
+                entity_type="organization_company",
+                entity_id=relationship_id,
+                metadata_json={
+                    "workflow_version": WORKFLOW_VERSION,
+                    "product_id": product_id,
+                    "executed_steps": [item["step"] for item in executed_steps],
+                    "stop_reason": stop_reason,
+                    "provider_credits_explicitly_allowed": allow_provider_credits,
+                },
+            )
+        )
+        self.session.flush()
+        return {
+            "workflow_version": WORKFLOW_VERSION,
+            "executed_steps": executed_steps,
+            "stop_reason": stop_reason,
+            "plan": final_plan,
         }
 
     @staticmethod
