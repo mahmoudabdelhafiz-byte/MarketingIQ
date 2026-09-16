@@ -18,7 +18,6 @@ from marketingiq.domain.pipeline import (
     SalesOpportunityStageEvent,
 )
 
-
 STAGE_ORDER = {
     OpportunityStage.CONTACTED: 0,
     OpportunityStage.RESPONDED: 1,
