@@ -11,8 +11,13 @@ from marketingiq.api.app import create_app
 from marketingiq.application.errors import AuthorizationError, ConflictError
 from marketingiq.application.outbound import OutboundSenderRegistry, OutboundSendService
 from marketingiq.application.tenant import TenantContext
-from marketingiq.domain.models import AuditLog, CompanyFact, DataClassification, MembershipRole
-from marketingiq.domain.models import RedistributionStatus
+from marketingiq.domain.models import (
+    AuditLog,
+    CompanyFact,
+    DataClassification,
+    MembershipRole,
+    RedistributionStatus,
+)
 from marketingiq.domain.outbound import (
     OutboundProviderError,
     OutboundSendAttempt,
@@ -175,9 +180,10 @@ def test_provider_failure_and_not_configured_are_persisted_as_safe_attempts(sess
     assert failed.error_category == "PROVIDER_ERROR"
     assert len(sender.calls) == 1
     assert session.get(OutboundSendAttempt, failed.id).status == OutboundSendStatus.FAILED
-    assert "secret smtp detail" not in str(
-        session.scalar(select(AuditLog).where(AuditLog.action == "outbound_send.failed")).metadata_json
+    failed_audit = session.scalar(
+        select(AuditLog).where(AuditLog.action == "outbound_send.failed")
     )
+    assert "secret smtp detail" not in str(failed_audit.metadata_json)
 
     other = seed_campaign(session)
     other_draft, _ = approved_draft(session, other)
