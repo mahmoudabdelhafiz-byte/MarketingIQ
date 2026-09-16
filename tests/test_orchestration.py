@@ -71,6 +71,37 @@ def test_contact_discovery_requires_explicit_provider_credit_approval(session):
     assert session.scalar(select(ContactEmail)) is None
 
 
+def test_guarded_run_stops_at_provider_credit_gate_without_spending(session):
+    seeded = seed_campaign(session)
+    session.delete(seeded["email"])
+    session.delete(seeded["contact"])
+    session.flush()
+
+    result = service(session, seeded).run_until_gate(
+        seeded["relationship"].id,
+        seeded["product"].id,
+    )
+
+    assert result["executed_steps"] == []
+    assert result["stop_reason"] == "PROVIDER_CREDIT_APPROVAL_REQUIRED"
+    assert result["plan"]["next_step"] == "DISCOVER_CONTACTS"
+    assert session.scalar(select(ContactCandidate)) is None
+    assert session.scalar(select(ContactEmail)) is None
+
+
+def test_guarded_run_stops_at_human_campaign_gate(session):
+    seeded = seed_campaign(session)
+
+    result = service(session, seeded).run_until_gate(
+        seeded["relationship"].id,
+        seeded["product"].id,
+    )
+
+    assert result["executed_steps"] == []
+    assert result["stop_reason"] == "HUMAN_CAMPAIGN_GATE"
+    assert result["plan"]["state"] == "READY_FOR_HUMAN_CAMPAIGN_REVIEW"
+
+
 def test_plan_is_readable_but_execution_keeps_existing_rbac(tmp_path):
     url = f"sqlite+pysqlite:///{tmp_path / 'orchestration-api.db'}"
     seeded = seed_api_database(url)
@@ -97,3 +128,11 @@ def test_plan_is_readable_but_execution_keeps_existing_rbac(tmp_path):
         json={"step": "RESEARCH_PUBLIC"},
     )
     assert denied.status_code == 403
+
+    denied_run = client.post(
+        base + "/run",
+        headers=reader,
+        params={"product_id": product_id},
+        json={},
+    )
+    assert denied_run.status_code == 403
