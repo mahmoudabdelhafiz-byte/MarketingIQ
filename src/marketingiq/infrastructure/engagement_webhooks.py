@@ -34,7 +34,9 @@ def verify_engagement_webhook(
     max_age = _max_age_seconds()
     current = int(time.time()) if now_epoch is None else now_epoch
     if abs(current - event_epoch) > max_age:
-        raise EngagementWebhookAuthenticationError("Webhook timestamp is outside the allowed window")
+        raise EngagementWebhookAuthenticationError(
+            "Webhook timestamp is outside the allowed window"
+        )
 
     supplied = signature.strip()
     if supplied.startswith("sha256="):
