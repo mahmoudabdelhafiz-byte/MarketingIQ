@@ -29,9 +29,10 @@ standard Python packaging workflow. Set `PIP_CONSTRAINT=constraints/dev.txt` bef
 editable install to reproduce those direct selections. Upgrade the project metadata and
 constraint together, then run the full suite.
 
-GitHub Actions runs Python 3.12 against PostgreSQL 16, followed by Ruff, byte compilation, and
-pytest. `TEST_DATABASE_URL` enables tests marked `postgresql`; without it those retained tests
-are explicitly skipped rather than silently using SQLite.
+GitHub Actions runs Python 3.12 against MySQL 8, followed by Ruff, byte compilation, pytest, and a
+full Alembic `upgrade head` against a disposable MySQL database. `TEST_DATABASE_URL` enables tests
+marked `mysql`; without it those retained integration tests are explicitly skipped rather than
+silently using SQLite.
 
 The Codex workspace's install failure is environmental: pip has no custom project index
 configuration, but its HTTPS traffic is routed through the workspace proxy, which returns HTTP
