@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from marketingiq.api.engagement_routes import register_engagement_routes
 from marketingiq.application.outbound import OutboundSenderRegistry, OutboundSendService
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.outbound import SuppressionSource
@@ -77,6 +78,8 @@ def register_outbound_routes(
     @app.get(prefix + "/outbound/providers/status")
     def outbound_provider_status(svc: OutboundService):
         return svc.provider_status()
+
+    register_engagement_routes(app, prefix, tenant_dependency, session_dependency)
 
 
 def _attempt_output(item) -> dict[str, Any]:
