@@ -23,21 +23,36 @@ def upgrade() -> None:
     op.create_table(
         "outreach_engagement_events",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("organization_id", sa.String(36), sa.ForeignKey("organizations.id"), nullable=False),
+        sa.Column(
+            "organization_id",
+            sa.String(36),
+            sa.ForeignKey("organizations.id"),
+            nullable=False,
+        ),
         sa.Column(
             "organization_company_id",
             sa.String(36),
             sa.ForeignKey("organization_companies.id"),
             nullable=False,
         ),
-        sa.Column("company_id", sa.String(36), sa.ForeignKey("companies.id"), nullable=False),
+        sa.Column(
+            "company_id",
+            sa.String(36),
+            sa.ForeignKey("companies.id"),
+            nullable=False,
+        ),
         sa.Column(
             "send_attempt_id",
             sa.String(36),
             sa.ForeignKey("outbound_send_attempts.id"),
             nullable=False,
         ),
-        sa.Column("draft_id", sa.String(36), sa.ForeignKey("campaign_drafts.id"), nullable=False),
+        sa.Column(
+            "draft_id",
+            sa.String(36),
+            sa.ForeignKey("campaign_drafts.id"),
+            nullable=False,
+        ),
         sa.Column(
             "contact_id",
             sa.String(36),
@@ -56,7 +71,12 @@ def upgrade() -> None:
         sa.Column("reason_code", sa.String(100), nullable=True),
         sa.Column("metadata_json", sa.JSON(), nullable=False),
         sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("recorded_by_user_id", sa.String(36), sa.ForeignKey("users.id"), nullable=False),
+        sa.Column(
+            "recorded_by_user_id",
+            sa.String(36),
+            sa.ForeignKey("users.id"),
+            nullable=False,
+        ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.UniqueConstraint(
             "organization_id",
