@@ -65,13 +65,17 @@ class AutomationOrchestrationService:
         product = self._product(product_id)
         active_icp = self._active_icp(product.id)
         assessment = self._latest_assessment(relationship.id, product.id)
-        assessment_freshness = self.freshness.get(relationship.id, assessment.id) if assessment else None
+        assessment_freshness = (
+            self.freshness.get(relationship.id, assessment.id) if assessment else None
+        )
         qualification = self._latest_qualification(
             relationship.id,
             product.id,
             assessment.id if assessment and assessment_freshness["is_current"] else None,
         )
-        contact_count = self._contact_count(relationship.id, qualification.id) if qualification else 0
+        contact_count = (
+            self._contact_count(relationship.id, qualification.id) if qualification else 0
+        )
 
         steps: list[dict[str, Any]] = []
         needs_research = assessment is None or not assessment_freshness["is_current"]
@@ -118,7 +122,10 @@ class AutomationOrchestrationService:
                 else "A current fit assessment is required first",
             )
         )
-        actionable = qualification is not None and qualification.status in ACTIONABLE_QUALIFICATION_STATUSES
+        actionable = (
+            qualification is not None
+            and qualification.status in ACTIONABLE_QUALIFICATION_STATUSES
+        )
         steps.append(
             self._step(
                 OrchestrationStep.DISCOVER_CONTACTS,
@@ -134,8 +141,14 @@ class AutomationOrchestrationService:
             )
         )
 
-        next_step = next((item["step"] for item in steps if item["status"] == "READY"), None)
-        state = "READY_FOR_HUMAN_CAMPAIGN_REVIEW" if actionable and contact_count > 0 else "IN_PROGRESS"
+        next_step = next(
+            (item["step"] for item in steps if item["status"] == "READY"), None
+        )
+        state = (
+            "READY_FOR_HUMAN_CAMPAIGN_REVIEW"
+            if actionable and contact_count > 0
+            else "IN_PROGRESS"
+        )
         return {
             "workflow_version": WORKFLOW_VERSION,
             "organization_id": self.tenant.organization_id,
@@ -198,7 +211,10 @@ class AutomationOrchestrationService:
             if not allow_provider_credits:
                 raise ConflictError("ORCHESTRATION_PROVIDER_CREDIT_APPROVAL_REQUIRED")
             qualification = self._latest_qualification(relationship_id, product_id, None)
-            if qualification is None or qualification.status not in ACTIONABLE_QUALIFICATION_STATUSES:
+            if (
+                qualification is None
+                or qualification.status not in ACTIONABLE_QUALIFICATION_STATUSES
+            ):
                 raise ConflictError("ORCHESTRATION_ACTIONABLE_QUALIFICATION_REQUIRED")
             result = ContactDiscoveryService(
                 self.session, self.tenant, self.provider_registry
