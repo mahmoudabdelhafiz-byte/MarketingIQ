@@ -158,7 +158,6 @@ def test_learning_api_is_readable_by_read_only_role(tmp_path):
     summary = client.get(
         learning_base + "/conversion-summary",
         headers=reader,
-        params={"product_id": seeded["product_id"]},
     )
     assert summary.status_code == 200
     assert summary.json()["sample_size"] == 1
@@ -166,7 +165,6 @@ def test_learning_api_is_readable_by_read_only_role(tmp_path):
     roles = client.get(
         learning_base + "/buyer-role-performance",
         headers=reader,
-        params={"product_id": seeded["product_id"]},
     )
     assert roles.status_code == 200
     assert roles.json()[0]["sample_size"] == 1
