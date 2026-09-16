@@ -17,7 +17,7 @@ from marketingiq.api.app import create_app
 from marketingiq.application.engagement import ProviderEngagementIngestionService
 from marketingiq.application.errors import ConflictError, NotFoundError
 from marketingiq.application.outbound import OutboundSenderRegistry
-from marketingiq.domain.engagement import EngagementEventType, EngagementSource, OutreachEngagementEvent
+from marketingiq.domain.engagement import EngagementEventType, EngagementSource
 from marketingiq.domain.models import AuditLog
 from marketingiq.domain.outbound import SuppressionEntry, SuppressionSource
 
@@ -190,9 +190,6 @@ def test_signed_webhook_ingests_without_tenant_jwt_and_rejects_bad_signatures(
     )
     assert repeated.status_code == 200
     assert repeated.json()["id"] == accepted.json()["id"]
-
-    with app.state.outbound_sender_registry._senders["SMTP"] if False else pytest.raises(Exception):
-        pass
 
 
 def test_webhook_rejects_expired_signature_before_processing(tmp_path, monkeypatch):
