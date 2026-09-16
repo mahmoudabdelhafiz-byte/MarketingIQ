@@ -51,11 +51,23 @@ class CampaignDraft(Base):
     )
     contact_id: Mapped[str] = mapped_column(ForeignKey("contact_candidates.id"), index=True)
     channel: Mapped[CampaignChannel] = mapped_column(
-        Enum(CampaignChannel, native_enum=False, validate_strings=True, create_constraint=True),
+        Enum(
+            CampaignChannel,
+            name="campaign_drafts_campaign_channel",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+        ),
         default=CampaignChannel.EMAIL,
     )
     status: Mapped[CampaignDraftStatus] = mapped_column(
-        Enum(CampaignDraftStatus, native_enum=False, validate_strings=True, create_constraint=True),
+        Enum(
+            CampaignDraftStatus,
+            name="campaign_drafts_status",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+        ),
         default=CampaignDraftStatus.DRAFT,
     )
     subject: Mapped[str] = mapped_column(String(255))
@@ -68,12 +80,19 @@ class CampaignDraft(Base):
     created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     classification: Mapped[DataClassification] = mapped_column(
-        Enum(DataClassification, native_enum=False, validate_strings=True, create_constraint=True),
+        Enum(
+            DataClassification,
+            name="campaign_drafts_data_classification",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+        ),
         default=DataClassification.MARKETINGIQ_DERIVED,
     )
     redistribution_status: Mapped[RedistributionStatus] = mapped_column(
         Enum(
             RedistributionStatus,
+            name="campaign_drafts_redistribution_status",
             native_enum=False,
             validate_strings=True,
             create_constraint=True,
