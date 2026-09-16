@@ -9,6 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from marketingiq.api.campaign_routes import register_campaign_routes
 from marketingiq.api.schemas import (
     Activation,
     CompanyAttach,
@@ -485,6 +486,7 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
         # Resolving tenant first intentionally protects even configuration metadata.
         return app.state.provider_registry.status()
 
+    register_campaign_routes(app, prefix, tenant, session)
     return app
 
 
