@@ -177,6 +177,7 @@ def test_automation_policy_api_admin_management_and_read_only_rbac(tmp_path):
         )
         assert membership is not None
         membership.role = MembershipRole.ORGANIZATION_ADMIN
+        admin_user_id = membership.user_id
         product_id = session.scalar(select(Product.id))
         session.commit()
     assert product_id is not None
@@ -198,7 +199,7 @@ def test_automation_policy_api_admin_management_and_read_only_rbac(tmp_path):
     created = client.post(base, headers=admin, json=payload)
     assert created.status_code == 201
     policy_id = created.json()["id"]
-    assert created.json()["run_as_user_id"] == membership.user_id
+    assert created.json()["run_as_user_id"] == admin_user_id
 
     listing = client.get(base, headers=reader)
     assert listing.status_code == 200
