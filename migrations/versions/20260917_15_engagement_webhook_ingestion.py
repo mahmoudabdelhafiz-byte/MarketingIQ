@@ -21,7 +21,10 @@ def upgrade() -> None:
     tables = set(inspector.get_table_names())
 
     if "outreach_engagement_events" in tables:
-        columns = {item["name"]: item for item in inspector.get_columns("outreach_engagement_events")}
+        columns = {
+            item["name"]: item
+            for item in inspector.get_columns("outreach_engagement_events")
+        }
         if "provider_key" not in columns:
             op.add_column(
                 "outreach_engagement_events",
