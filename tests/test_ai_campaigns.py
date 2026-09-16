@@ -37,7 +37,8 @@ class FakeAIProvider:
                 "Hi Ava,\n\n"
                 "I noticed Acme Logistics operates in Logistics. "
                 "MarketingIQ turns evidence into focused B2B pursuit decisions.\n\n"
-                "Would a 20-minute conversation be useful to explore whether this could fit your priorities?\n\n"
+                "Would a 20-minute conversation be useful to explore whether this "
+                "could fit your priorities?\n\n"
                 "Best regards,"
             ),
             used_fact_keys=tuple(self.used_fact_keys),
