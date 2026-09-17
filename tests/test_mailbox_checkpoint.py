@@ -46,7 +46,11 @@ def _reader(session, client: FakeIMAPClient) -> CheckpointedIMAPMailboxReader:
         password="secret",
         mailbox="INBOX",
     )
-    reader._connect = lambda: client
+
+    def connect():
+        return client
+
+    reader._connect = connect
     return reader
 
 
