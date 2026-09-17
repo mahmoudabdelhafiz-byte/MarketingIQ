@@ -15,9 +15,31 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _backfill_provider_lists(bind: sa.Connection) -> None:
+    if bind.dialect.name == "mysql":
+        empty_json = "JSON_ARRAY()"
+    elif bind.dialect.name == "postgresql":
+        empty_json = "CAST('[]' AS JSON)"
+    else:
+        empty_json = "'[]'"
+
+    op.execute(
+        sa.text(
+            "UPDATE research_runs "
+            f"SET providers_attempted = {empty_json} "
+            "WHERE providers_attempted IS NULL"
+        )
+    )
+    op.execute(
+        sa.text(
+            "UPDATE research_runs "
+            f"SET providers_succeeded = {empty_json} "
+            "WHERE providers_succeeded IS NULL"
+        )
+    )
+
+
 def upgrade() -> None:
-    # The Sprint 1 bootstrap revision used live metadata. The guards support both databases that
-    # already ran Sprint 1 and clean installs where that bootstrap sees the current model snapshot.
     inspector = sa.inspect(op.get_bind())
     run_columns = {column["name"] for column in inspector.get_columns("research_runs")}
     if "mode" not in run_columns:
@@ -30,14 +52,27 @@ def upgrade() -> None:
             batch.add_column(
                 sa.Column("mode", sa.String(20), nullable=False, server_default="PUBLIC_ONLY")
             )
-            batch.add_column(
-                sa.Column("providers_attempted", sa.JSON(), nullable=False, server_default="[]")
-            )
-            batch.add_column(
-                sa.Column("providers_succeeded", sa.JSON(), nullable=False, server_default="[]")
-            )
+            # JSON defaults are not portable to MySQL. Add nullable, backfill, then tighten.
+            batch.add_column(sa.Column("providers_attempted", sa.JSON(), nullable=True))
+            batch.add_column(sa.Column("providers_succeeded", sa.JSON(), nullable=True))
             batch.add_column(sa.Column("error_summary", sa.Text(), nullable=True))
             batch.add_column(sa.Column("workflow_version", sa.String(100), nullable=True))
+
+        bind = op.get_bind()
+        _backfill_provider_lists(bind)
+        with op.batch_alter_table("research_runs") as batch:
+            batch.alter_column(
+                "providers_attempted",
+                existing_type=sa.JSON(),
+                nullable=False,
+            )
+            batch.alter_column(
+                "providers_succeeded",
+                existing_type=sa.JSON(),
+                nullable=False,
+            )
+
+    inspector = sa.inspect(op.get_bind())
     if "provider_usage" in inspector.get_table_names():
         return
     op.create_table(
