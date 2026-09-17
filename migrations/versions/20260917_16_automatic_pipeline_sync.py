@@ -55,7 +55,8 @@ def upgrade() -> None:
         )
 
     check_names = {
-        item.get("name") for item in inspector.get_check_constraints("sales_opportunity_stage_events")
+        item.get("name")
+        for item in inspector.get_check_constraints("sales_opportunity_stage_events")
     }
     if "sales_opportunity_stage_event_source" not in check_names:
         op.create_check_constraint(
@@ -94,7 +95,8 @@ def downgrade() -> None:
         )
 
     check_names = {
-        item.get("name") for item in inspector.get_check_constraints("sales_opportunity_stage_events")
+        item.get("name")
+        for item in inspector.get_check_constraints("sales_opportunity_stage_events")
     }
     if "sales_opportunity_stage_event_source" in check_names:
         op.drop_constraint(
