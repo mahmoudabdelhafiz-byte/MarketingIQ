@@ -201,7 +201,7 @@ class ProductCriterion(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     product_id: Mapped[str] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"))
     kind: Mapped[str] = mapped_column(String(40))
-    value: Mapped[str] = mapped_column(Text)
+    value: Mapped[str] = mapped_column(String(500))
 
 
 class ICP(Base, TimestampMixin):
@@ -233,7 +233,7 @@ class ICPCriterion(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     icp_id: Mapped[str] = mapped_column(ForeignKey("icps.id", ondelete="CASCADE"))
     kind: Mapped[str] = mapped_column(String(40))
-    value: Mapped[str] = mapped_column(Text)
+    value: Mapped[str] = mapped_column(String(500))
     weight: Mapped[int] = mapped_column(Integer, default=3)
     required: Mapped[bool] = mapped_column(Boolean, default=False)
 
