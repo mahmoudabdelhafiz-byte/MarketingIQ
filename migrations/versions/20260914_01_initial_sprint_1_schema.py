@@ -125,7 +125,12 @@ def upgrade() -> None:
         sa.Column("value", sa.String(500), nullable=False),
         sa.ForeignKeyConstraint(["product_id"], ["products.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(\n            "product_id",\n            "kind",\n            "value",\n            name="uq_product_criteria_product_kind_value",\n        ),
+        sa.UniqueConstraint(
+            "product_id",
+            "kind",
+            "value",
+            name="uq_product_criteria_product_kind_value",
+        ),
     )
     op.create_table(
         "icps",
@@ -157,7 +162,12 @@ def upgrade() -> None:
         sa.Column("value", sa.String(500), nullable=False),
         sa.ForeignKeyConstraint(["icp_id"], ["icps.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(\n            "icp_id",\n            "kind",\n            "value",\n            name="uq_icp_criteria_icp_kind_value",\n        ),
+        sa.UniqueConstraint(
+            "icp_id",
+            "kind",
+            "value",
+            name="uq_icp_criteria_icp_kind_value",
+        ),
     )
     op.create_table(
         "companies",
