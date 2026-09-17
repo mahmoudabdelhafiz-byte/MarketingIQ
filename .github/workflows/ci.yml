@@ -37,5 +37,43 @@ jobs:
       - run: ruff check .
       - run: python -m compileall -q src tests
       - run: pytest -q
-      - name: Verify Alembic upgrade on MySQL
+      - name: Verify frozen Alembic baseline on MySQL
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: |
+          alembic upgrade 20260914_01
+          python - <<'PY'
+          import os
+
+          from sqlalchemy import create_engine, inspect
+
+          expected = {
+              "alembic_version",
+              "audit_logs",
+              "companies",
+              "company_facts",
+              "company_identifiers",
+              "data_sources",
+              "evidence",
+              "human_overrides",
+              "icp_criteria",
+              "icps",
+              "organization_companies",
+              "organization_memberships",
+              "organizations",
+              "product_criteria",
+              "products",
+              "research_runs",
+              "users",
+          }
+          engine = create_engine(os.environ["DATABASE_URL"])
+          actual = set(inspect(engine).get_table_names())
+          missing = sorted(expected - actual)
+          unexpected = sorted(actual - expected)
+          if missing or unexpected:
+              raise SystemExit(
+                  f"revision 20260914_01 drifted: missing={missing}, unexpected={unexpected}"
+              )
+          PY
+      - name: Verify Alembic upgrade to head on MySQL
         run: DATABASE_URL="$TEST_DATABASE_URL" alembic upgrade head
