@@ -108,7 +108,7 @@ class IMAPMailboxReader:
 
     @property
     def identity(self) -> str:
-        raw = f"{self.host or ''}|{self.username or ''}|{self.mailbox}".encode("utf-8")
+        raw = f"{self.host or ''}|{self.username or ''}|{self.mailbox}".encode()
         return hashlib.sha256(raw).hexdigest()[:24]
 
     def fetch_messages(self, limit: int) -> list[MailboxMessage]:
@@ -421,5 +421,5 @@ def _mailbox_event_id(
     uid: str,
     incoming_message_id: str | None,
 ) -> str:
-    raw = f"{mailbox_identity}|{uid}|{incoming_message_id or ''}".encode("utf-8")
+    raw = f"{mailbox_identity}|{uid}|{incoming_message_id or ''}".encode()
     return f"imap:{hashlib.sha256(raw).hexdigest()}"
