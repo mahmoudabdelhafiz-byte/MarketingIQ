@@ -93,6 +93,45 @@ class ConversionIntelligenceService:
     ) -> list[dict[str, Any]]:
         return self._grouped("country", product_id, min_sample_size)
 
+    def monthly_cohorts(
+        self,
+        product_id: str | None = None,
+        min_sample_size: int = 1,
+        limit: int = 24,
+    ) -> list[dict[str, Any]]:
+        require_permission(self.tenant, Permission.READ)
+        if min_sample_size < 1 or min_sample_size > 1000:
+            raise ValueError("min_sample_size must be between 1 and 1000")
+        if limit < 1 or limit > 120:
+            raise ValueError("limit must be between 1 and 120")
+
+        opportunities = self._opportunities(product_id)
+        reached = self._reached(opportunities)
+        grouped: dict[str, list[SalesOpportunity]] = {}
+        for opportunity in opportunities:
+            created_at = opportunity.created_at
+            cohort = f"{created_at.year:04d}-{created_at.month:02d}"
+            grouped.setdefault(cohort, []).append(opportunity)
+
+        cohorts = sorted(grouped)[-limit:]
+        result: list[dict[str, Any]] = []
+        for cohort in cohorts:
+            items = grouped[cohort]
+            if len(items) < min_sample_size:
+                continue
+            counts = self._counts(items, reached)
+            result.append(
+                {
+                    "cohort": cohort,
+                    "cohort_basis": "OPPORTUNITY_CREATED_AT_MONTH",
+                    "outcome_basis": "OBSERVED_STAGE_HISTORY_TO_DATE",
+                    "sample_size": len(items),
+                    "counts": counts,
+                    "rates": self._rates(counts),
+                }
+            )
+        return result
+
     def _grouped(
         self,
         dimension: str,
