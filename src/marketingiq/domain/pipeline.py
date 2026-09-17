@@ -18,6 +18,11 @@ class OpportunityStage(enum.StrEnum):
     LOST = "LOST"
 
 
+class StageEventSource(enum.StrEnum):
+    MANUAL = "MANUAL"
+    SYSTEM = "SYSTEM"
+
+
 class SalesOpportunity(Base):
     __tablename__ = "sales_opportunities"
     __table_args__ = (
@@ -105,8 +110,20 @@ class SalesOpportunityStageEvent(Base):
             create_constraint=True,
         )
     )
+    source: Mapped[StageEventSource] = mapped_column(
+        Enum(
+            StageEventSource,
+            name="sales_opportunity_stage_event_source",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+        ),
+        default=StageEventSource.MANUAL,
+    )
     note: Mapped[str | None] = mapped_column(Text)
     reason_code: Mapped[str | None] = mapped_column(String(100))
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"), index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

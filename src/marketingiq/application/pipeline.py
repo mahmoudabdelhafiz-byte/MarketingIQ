@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from marketingiq.application.authorization import Permission, require_permission
@@ -16,6 +17,7 @@ from marketingiq.domain.pipeline import (
     OpportunityStage,
     SalesOpportunity,
     SalesOpportunityStageEvent,
+    StageEventSource,
 )
 
 STAGE_ORDER = {
@@ -238,26 +240,18 @@ class SalesPipelineService:
         reason_code: str | None,
         occurred_at: datetime,
     ) -> None:
-        sequence = self.session.scalar(
-            select(func.count(SalesOpportunityStageEvent.id)).where(
-                SalesOpportunityStageEvent.opportunity_id == opportunity.id
-            )
+        _append_stage_event(
+            self.session,
+            opportunity,
+            from_stage,
+            to_stage,
+            source=StageEventSource.MANUAL,
+            note=note,
+            reason_code=reason_code,
+            occurred_at=occurred_at,
+            created_by_user_id=self.tenant.actor_user_id,
+            created_at=self.now,
         )
-        self.session.add(
-            SalesOpportunityStageEvent(
-                organization_id=self.tenant.organization_id,
-                opportunity_id=opportunity.id,
-                sequence_number=int(sequence or 0) + 1,
-                from_stage=from_stage,
-                to_stage=to_stage,
-                note=note,
-                reason_code=reason_code,
-                occurred_at=occurred_at,
-                created_by_user_id=self.tenant.actor_user_id,
-                created_at=self.now,
-            )
-        )
-        self.session.flush()
 
     def _relationship(self, relationship_id: str) -> OrganizationCompany:
         relationship = self.session.scalar(
@@ -324,20 +318,208 @@ class SalesPipelineService:
         opportunity: SalesOpportunity,
         stage: OpportunityStage,
     ) -> None:
-        self.session.add(
-            AuditLog(
-                organization_id=self.tenant.organization_id,
-                actor_user_id=self.tenant.actor_user_id,
-                action=action,
-                entity_type="sales_opportunity",
-                entity_id=opportunity.id,
-                metadata_json={
-                    "company_id": opportunity.company_id,
-                    "product_id": opportunity.product_id,
-                    "qualification_id": opportunity.qualification_id,
-                    "contact_id": opportunity.contact_id,
-                    "send_attempt_id": opportunity.send_attempt_id,
-                    "stage": stage.value,
-                },
+        _audit_pipeline(
+            self.session,
+            action,
+            opportunity,
+            stage,
+            actor_user_id=self.tenant.actor_user_id,
+            source=StageEventSource.MANUAL,
+        )
+
+
+class SalesPipelineSyncService:
+    """Idempotently synchronize observed outreach facts into the tenant sales pipeline."""
+
+    def __init__(self, session: Session, now: datetime | None = None) -> None:
+        self.session = session
+        self.now = now or datetime.now(UTC)
+
+    def ensure_for_sent_attempt(self, attempt: OutboundSendAttempt) -> SalesOpportunity | None:
+        if attempt.status != OutboundSendStatus.SENT:
+            return None
+        existing = self._opportunity(attempt.organization_id, attempt.id)
+        if existing is not None:
+            return existing
+
+        draft = self.session.scalar(
+            select(CampaignDraft).where(
+                CampaignDraft.id == attempt.draft_id,
+                CampaignDraft.organization_id == attempt.organization_id,
+                CampaignDraft.organization_company_id == attempt.organization_company_id,
+                CampaignDraft.company_id == attempt.company_id,
             )
         )
+        if draft is None:
+            return None
+
+        stage = self._initial_stage(attempt.organization_id, attempt.id)
+        opportunity = SalesOpportunity(
+            organization_id=attempt.organization_id,
+            organization_company_id=attempt.organization_company_id,
+            company_id=attempt.company_id,
+            product_id=draft.product_id,
+            qualification_id=draft.qualification_id,
+            contact_id=attempt.contact_id,
+            draft_id=attempt.draft_id,
+            send_attempt_id=attempt.id,
+            stage=stage,
+            estimated_value=None,
+            currency=None,
+            next_action=None,
+            owner_user_id=attempt.requested_by_user_id,
+            created_by_user_id=attempt.requested_by_user_id,
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        try:
+            with self.session.begin_nested():
+                self.session.add(opportunity)
+                self.session.flush()
+                _append_stage_event(
+                    self.session,
+                    opportunity,
+                    None,
+                    stage,
+                    source=StageEventSource.SYSTEM,
+                    note=None,
+                    reason_code="AUTO_CREATED_AFTER_SENT_OUTREACH",
+                    occurred_at=attempt.completed_at or self.now,
+                    created_by_user_id=None,
+                    created_at=self.now,
+                )
+        except IntegrityError:
+            existing = self._opportunity(attempt.organization_id, attempt.id)
+            if existing is not None:
+                return existing
+            raise
+
+        _audit_pipeline(
+            self.session,
+            "sales_opportunity.auto_created",
+            opportunity,
+            stage,
+            actor_user_id=attempt.requested_by_user_id,
+            source=StageEventSource.SYSTEM,
+        )
+        return opportunity
+
+    def synchronize_reply(
+        self,
+        attempt: OutboundSendAttempt,
+        *,
+        occurred_at: datetime,
+        triggered_by_user_id: str | None,
+    ) -> SalesOpportunity | None:
+        opportunity = self.ensure_for_sent_attempt(attempt)
+        if opportunity is None or opportunity.stage != OpportunityStage.CONTACTED:
+            return opportunity
+
+        opportunity.stage = OpportunityStage.RESPONDED
+        opportunity.updated_at = self.now
+        _append_stage_event(
+            self.session,
+            opportunity,
+            OpportunityStage.CONTACTED,
+            OpportunityStage.RESPONDED,
+            source=StageEventSource.SYSTEM,
+            note=None,
+            reason_code="AUTO_REPLY_DETECTED",
+            occurred_at=occurred_at,
+            created_by_user_id=triggered_by_user_id,
+            created_at=self.now,
+        )
+        _audit_pipeline(
+            self.session,
+            "sales_opportunity.auto_responded",
+            opportunity,
+            OpportunityStage.RESPONDED,
+            actor_user_id=triggered_by_user_id,
+            source=StageEventSource.SYSTEM,
+        )
+        return opportunity
+
+    def _opportunity(self, organization_id: str, attempt_id: str) -> SalesOpportunity | None:
+        return self.session.scalar(
+            select(SalesOpportunity).where(
+                SalesOpportunity.organization_id == organization_id,
+                SalesOpportunity.send_attempt_id == attempt_id,
+            )
+        )
+
+    def _initial_stage(self, organization_id: str, attempt_id: str) -> OpportunityStage:
+        reply = self.session.scalar(
+            select(OutreachEngagementEvent.id)
+            .where(
+                OutreachEngagementEvent.organization_id == organization_id,
+                OutreachEngagementEvent.send_attempt_id == attempt_id,
+                OutreachEngagementEvent.event_type.in_(REPLY_EVENTS),
+            )
+            .limit(1)
+        )
+        return OpportunityStage.RESPONDED if reply is not None else OpportunityStage.CONTACTED
+
+
+def _append_stage_event(
+    session: Session,
+    opportunity: SalesOpportunity,
+    from_stage: OpportunityStage | None,
+    to_stage: OpportunityStage,
+    *,
+    source: StageEventSource,
+    note: str | None,
+    reason_code: str | None,
+    occurred_at: datetime,
+    created_by_user_id: str | None,
+    created_at: datetime,
+) -> None:
+    sequence = session.scalar(
+        select(func.count(SalesOpportunityStageEvent.id)).where(
+            SalesOpportunityStageEvent.opportunity_id == opportunity.id
+        )
+    )
+    session.add(
+        SalesOpportunityStageEvent(
+            organization_id=opportunity.organization_id,
+            opportunity_id=opportunity.id,
+            sequence_number=int(sequence or 0) + 1,
+            from_stage=from_stage,
+            to_stage=to_stage,
+            source=source,
+            note=note,
+            reason_code=reason_code,
+            occurred_at=occurred_at,
+            created_by_user_id=created_by_user_id,
+            created_at=created_at,
+        )
+    )
+    session.flush()
+
+
+def _audit_pipeline(
+    session: Session,
+    action: str,
+    opportunity: SalesOpportunity,
+    stage: OpportunityStage,
+    *,
+    actor_user_id: str | None,
+    source: StageEventSource,
+) -> None:
+    session.add(
+        AuditLog(
+            organization_id=opportunity.organization_id,
+            actor_user_id=actor_user_id,
+            action=action,
+            entity_type="sales_opportunity",
+            entity_id=opportunity.id,
+            metadata_json={
+                "company_id": opportunity.company_id,
+                "product_id": opportunity.product_id,
+                "qualification_id": opportunity.qualification_id,
+                "contact_id": opportunity.contact_id,
+                "send_attempt_id": opportunity.send_attempt_id,
+                "stage": stage.value,
+                "source": source.value,
+            },
+        )
+    )
