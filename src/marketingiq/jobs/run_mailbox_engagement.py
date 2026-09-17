@@ -4,10 +4,8 @@ import json
 import os
 
 from marketingiq.infrastructure.database import create_database_engine, create_session_factory
-from marketingiq.infrastructure.mailbox_engagement import (
-    IMAPMailboxReader,
-    MailboxEngagementIngestor,
-)
+from marketingiq.infrastructure.mailbox_checkpoint import CheckpointedIMAPMailboxReader
+from marketingiq.infrastructure.mailbox_engagement import MailboxEngagementIngestor
 
 
 def main() -> None:
@@ -18,8 +16,8 @@ def main() -> None:
         raise RuntimeError("MAILBOX_ENGAGEMENT_BATCH_SIZE must be an integer") from error
 
     sessions = create_session_factory(create_database_engine())
-    reader = IMAPMailboxReader()
     with sessions() as session:
+        reader = CheckpointedIMAPMailboxReader(session)
         try:
             result = MailboxEngagementIngestor(session, reader).run(limit=limit)
             session.commit()
