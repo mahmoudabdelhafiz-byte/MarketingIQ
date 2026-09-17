@@ -69,3 +69,12 @@ def register_learning_routes(
         min_sample_size: int = Query(default=1, ge=1, le=1000),
     ):
         return svc.country_performance(product_id, min_sample_size)
+
+    @app.get(base + "/monthly-cohorts")
+    def monthly_cohorts(
+        svc: LearningService,
+        product_id: str | None = None,
+        min_sample_size: int = Query(default=1, ge=1, le=1000),
+        limit: int = Query(default=24, ge=1, le=120),
+    ):
+        return svc.monthly_cohorts(product_id, min_sample_size, limit)
