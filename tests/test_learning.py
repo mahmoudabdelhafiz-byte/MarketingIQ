@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 from test_campaigns import SECRET, login, seed_api_database, seed_campaign
@@ -166,6 +166,75 @@ def test_monthly_cohorts_use_pipeline_entry_month_and_observed_outcomes(session)
     ) == []
 
 
+def test_cycle_time_uses_send_completion_and_observed_stage_timestamps(session):
+    seeded = seed_campaign(session)
+    _draft, attempt = sent_attempt(session, seeded)
+    pipeline, learning = services(session, seeded)
+    sent_at = datetime(2026, 9, 1, 8, 0, tzinfo=UTC)
+    attempt.completed_at = sent_at
+    opportunity = pipeline.create(seeded["relationship"].id, attempt.id)
+    pipeline.move_stage(
+        seeded["relationship"].id,
+        opportunity.id,
+        OpportunityStage.RESPONDED,
+        occurred_at=sent_at + timedelta(hours=6),
+    )
+    pipeline.move_stage(
+        seeded["relationship"].id,
+        opportunity.id,
+        OpportunityStage.MEETING,
+        occurred_at=sent_at + timedelta(hours=30),
+    )
+    pipeline.move_stage(
+        seeded["relationship"].id,
+        opportunity.id,
+        OpportunityStage.PROPOSAL,
+        occurred_at=sent_at + timedelta(hours=72),
+    )
+    pipeline.move_stage(
+        seeded["relationship"].id,
+        opportunity.id,
+        OpportunityStage.WON,
+        occurred_at=sent_at + timedelta(hours=120),
+    )
+    session.flush()
+
+    result = learning.cycle_time(seeded["product"].id)
+    by_stage = {item["stage"]: item for item in result["stages"]}
+
+    assert result["opportunity_count"] == 1
+    assert by_stage["RESPONDED"]["median_hours"] == 6.0
+    assert by_stage["MEETING"]["median_hours"] == 30.0
+    assert by_stage["PROPOSAL"]["median_hours"] == 72.0
+    assert by_stage["WON"]["median_hours"] == 120.0
+    assert by_stage["WON"]["observation_coverage_pct"] == 100.0
+    assert result["methodology"]["predictive"] is False
+    assert result["methodology"]["censoring_adjustment_applied"] is False
+
+
+def test_cycle_time_excludes_negative_timestamp_observation(session):
+    seeded = seed_campaign(session)
+    _draft, attempt = sent_attempt(session, seeded)
+    pipeline, learning = services(session, seeded)
+    sent_at = datetime(2026, 9, 1, 8, 0, tzinfo=UTC)
+    attempt.completed_at = sent_at
+    opportunity = pipeline.create(seeded["relationship"].id, attempt.id)
+    pipeline.move_stage(
+        seeded["relationship"].id,
+        opportunity.id,
+        OpportunityStage.RESPONDED,
+        occurred_at=sent_at - timedelta(hours=1),
+    )
+    session.flush()
+
+    result = learning.cycle_time(seeded["product"].id)
+    responded = next(item for item in result["stages"] if item["stage"] == "RESPONDED")
+
+    assert responded["observed_count"] == 0
+    assert responded["invalid_timestamp_count"] == 1
+    assert responded["median_hours"] is None
+
+
 def test_minimum_sample_size_suppresses_small_groups(session):
     seeded = seed_campaign(session)
     _draft, attempt = sent_attempt(session, seeded)
@@ -263,3 +332,11 @@ def test_learning_api_is_readable_by_read_only_role(tmp_path):
     assert cohorts.status_code == 200
     assert cohorts.json()[0]["sample_size"] == 1
     assert cohorts.json()[0]["cohort_basis"] == "OPPORTUNITY_CREATED_AT_MONTH"
+
+    cycle_time = client.get(
+        learning_base + "/cycle-time",
+        headers=reader,
+    )
+    assert cycle_time.status_code == 200
+    assert cycle_time.json()["opportunity_count"] == 1
+    assert cycle_time.json()["methodology"]["predictive"] is False

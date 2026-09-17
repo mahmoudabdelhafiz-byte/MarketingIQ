@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from statistics import median
 from typing import Any
 
 from sqlalchemy import select
@@ -8,7 +10,9 @@ from sqlalchemy.orm import Session
 from marketingiq.application.authorization import Permission, require_permission
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.campaigns import CampaignDraft
+from marketingiq.domain.engagement import EngagementEventType, OutreachEngagementEvent
 from marketingiq.domain.models import ContactCandidate, LeadQualification, ProductFitAssessment
+from marketingiq.domain.outbound import OutboundSendAttempt
 from marketingiq.domain.pipeline import (
     OpportunityStage,
     SalesOpportunity,
@@ -21,6 +25,19 @@ FUNNEL_STAGES = (
     OpportunityStage.MEETING,
     OpportunityStage.PROPOSAL,
     OpportunityStage.WON,
+)
+
+TIMED_STAGES = (
+    OpportunityStage.RESPONDED,
+    OpportunityStage.MEETING,
+    OpportunityStage.PROPOSAL,
+    OpportunityStage.WON,
+)
+
+REPLY_EVENT_TYPES = (
+    EngagementEventType.REPLIED,
+    EngagementEventType.POSITIVE_REPLY,
+    EngagementEventType.NEGATIVE_REPLY,
 )
 
 SNAPSHOT_DIMENSIONS = {"industry", "country"}
@@ -132,6 +149,62 @@ class ConversionIntelligenceService:
             )
         return result
 
+    def cycle_time(self, product_id: str | None = None) -> dict[str, Any]:
+        """Report observed elapsed time from successful send to reached funnel stages."""
+
+        require_permission(self.tenant, Permission.READ)
+        opportunities = self._opportunities(product_id)
+        starts = self._send_completed_times(opportunities)
+        stage_times = self._first_stage_times(opportunities)
+        reply_times = self._first_reply_times(opportunities)
+
+        stages: list[dict[str, Any]] = []
+        for stage in TIMED_STAGES:
+            elapsed_hours: list[float] = []
+            invalid_timestamps = 0
+            for opportunity in opportunities:
+                start = starts.get(opportunity.id)
+                target = (
+                    reply_times.get(opportunity.id)
+                    if stage == OpportunityStage.RESPONDED
+                    else None
+                )
+                if target is None:
+                    target = stage_times.get((opportunity.id, stage))
+                if start is None or target is None:
+                    continue
+                elapsed = self._elapsed_hours(start, target)
+                if elapsed is None:
+                    invalid_timestamps += 1
+                    continue
+                elapsed_hours.append(elapsed)
+
+            stages.append(
+                self._cycle_time_stage(
+                    stage,
+                    elapsed_hours,
+                    opportunity_count=len(opportunities),
+                    invalid_timestamps=invalid_timestamps,
+                )
+            )
+
+        return {
+            "organization_id": self.tenant.organization_id,
+            "product_id": product_id,
+            "opportunity_count": len(opportunities),
+            "stages": stages,
+            "methodology": {
+                "type": "DESCRIPTIVE_OBSERVED_CYCLE_TIME",
+                "start_basis": "OUTBOUND_SEND_COMPLETED_AT",
+                "response_basis": "EARLIEST_REPLY_EVENT_OR_RESPONSE_STAGE_EVENT",
+                "later_stage_basis": "EARLIEST_PIPELINE_STAGE_EVENT",
+                "unreached_opportunities_are_censored": True,
+                "censoring_adjustment_applied": False,
+                "predictive": False,
+                "causal": False,
+            },
+        }
+
     def _grouped(
         self,
         dimension: str,
@@ -195,6 +268,115 @@ class ConversionIntelligenceService:
         for event in events:
             reached[event.opportunity_id].add(event.to_stage)
         return reached
+
+    def _send_completed_times(
+        self, opportunities: list[SalesOpportunity]
+    ) -> dict[str, datetime | None]:
+        if not opportunities:
+            return {}
+        ids = [item.id for item in opportunities]
+        rows = self.session.execute(
+            select(SalesOpportunity.id, OutboundSendAttempt.completed_at)
+            .join(
+                OutboundSendAttempt,
+                OutboundSendAttempt.id == SalesOpportunity.send_attempt_id,
+            )
+            .where(
+                SalesOpportunity.organization_id == self.tenant.organization_id,
+                SalesOpportunity.id.in_(ids),
+                OutboundSendAttempt.organization_id == self.tenant.organization_id,
+            )
+        )
+        return {opportunity_id: completed_at for opportunity_id, completed_at in rows}
+
+    def _first_stage_times(
+        self, opportunities: list[SalesOpportunity]
+    ) -> dict[tuple[str, OpportunityStage], datetime]:
+        if not opportunities:
+            return {}
+        ids = [item.id for item in opportunities]
+        events = self.session.scalars(
+            select(SalesOpportunityStageEvent)
+            .where(
+                SalesOpportunityStageEvent.organization_id == self.tenant.organization_id,
+                SalesOpportunityStageEvent.opportunity_id.in_(ids),
+                SalesOpportunityStageEvent.to_stage.in_(TIMED_STAGES),
+            )
+            .order_by(
+                SalesOpportunityStageEvent.opportunity_id,
+                SalesOpportunityStageEvent.sequence_number,
+            )
+        )
+        result: dict[tuple[str, OpportunityStage], datetime] = {}
+        for event in events:
+            result.setdefault((event.opportunity_id, event.to_stage), event.occurred_at)
+        return result
+
+    def _first_reply_times(
+        self, opportunities: list[SalesOpportunity]
+    ) -> dict[str, datetime]:
+        if not opportunities:
+            return {}
+        ids = [item.id for item in opportunities]
+        rows = self.session.execute(
+            select(SalesOpportunity.id, OutreachEngagementEvent.occurred_at)
+            .join(
+                OutreachEngagementEvent,
+                OutreachEngagementEvent.send_attempt_id == SalesOpportunity.send_attempt_id,
+            )
+            .where(
+                SalesOpportunity.organization_id == self.tenant.organization_id,
+                SalesOpportunity.id.in_(ids),
+                OutreachEngagementEvent.organization_id == self.tenant.organization_id,
+                OutreachEngagementEvent.event_type.in_(REPLY_EVENT_TYPES),
+            )
+            .order_by(
+                SalesOpportunity.id,
+                OutreachEngagementEvent.occurred_at,
+                OutreachEngagementEvent.id,
+            )
+        )
+        result: dict[str, datetime] = {}
+        for opportunity_id, occurred_at in rows:
+            result.setdefault(opportunity_id, occurred_at)
+        return result
+
+    @staticmethod
+    def _cycle_time_stage(
+        stage: OpportunityStage,
+        elapsed_hours: list[float],
+        *,
+        opportunity_count: int,
+        invalid_timestamps: int,
+    ) -> dict[str, Any]:
+        observed = len(elapsed_hours)
+        coverage = round((observed / opportunity_count) * 100, 1) if opportunity_count else 0.0
+        values = sorted(elapsed_hours)
+        return {
+            "stage": stage.value,
+            "observed_count": observed,
+            "opportunity_count": opportunity_count,
+            "observation_coverage_pct": coverage,
+            "invalid_timestamp_count": invalid_timestamps,
+            "median_hours": round(float(median(values)), 2) if values else None,
+            "min_hours": round(values[0], 2) if values else None,
+            "max_hours": round(values[-1], 2) if values else None,
+        }
+
+    @staticmethod
+    def _elapsed_hours(start: datetime, end: datetime) -> float | None:
+        normalized_start = ConversionIntelligenceService._as_utc(start)
+        normalized_end = ConversionIntelligenceService._as_utc(end)
+        seconds = (normalized_end - normalized_start).total_seconds()
+        if seconds < 0:
+            return None
+        return seconds / 3600
+
+    @staticmethod
+    def _as_utc(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     @staticmethod
     def _counts(
