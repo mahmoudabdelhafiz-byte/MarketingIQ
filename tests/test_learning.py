@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fastapi.testclient import TestClient
 from test_campaigns import SECRET, login, seed_api_database, seed_campaign
 from test_outbound import FakeSender, approved_draft, outbound_service
@@ -136,6 +138,34 @@ def test_snapshot_dimension_does_not_follow_later_current_fact_change(session):
     assert "Manufacturing" not in str(industries)
 
 
+def test_monthly_cohorts_use_pipeline_entry_month_and_observed_outcomes(session):
+    seeded = seed_campaign(session)
+    _draft, attempt = sent_attempt(session, seeded)
+    pipeline, learning = services(session, seeded)
+    opportunity = pipeline.create(seeded["relationship"].id, attempt.id)
+    opportunity.created_at = datetime(2026, 8, 31, 23, 0, tzinfo=UTC)
+    pipeline.move_stage(
+        seeded["relationship"].id,
+        opportunity.id,
+        OpportunityStage.RESPONDED,
+    )
+    session.flush()
+
+    cohorts = learning.monthly_cohorts(seeded["product"].id)
+
+    assert len(cohorts) == 1
+    assert cohorts[0]["cohort"] == "2026-08"
+    assert cohorts[0]["cohort_basis"] == "OPPORTUNITY_CREATED_AT_MONTH"
+    assert cohorts[0]["outcome_basis"] == "OBSERVED_STAGE_HISTORY_TO_DATE"
+    assert cohorts[0]["sample_size"] == 1
+    assert cohorts[0]["counts"]["responded"] == 1
+    assert cohorts[0]["rates"]["response_rate"] == 100.0
+    assert learning.monthly_cohorts(
+        seeded["product"].id,
+        min_sample_size=2,
+    ) == []
+
+
 def test_minimum_sample_size_suppresses_small_groups(session):
     seeded = seed_campaign(session)
     _draft, attempt = sent_attempt(session, seeded)
@@ -225,3 +255,11 @@ def test_learning_api_is_readable_by_read_only_role(tmp_path):
     )
     assert grades.status_code == 200
     assert grades.json()[0]["value"] == "A"
+
+    cohorts = client.get(
+        learning_base + "/monthly-cohorts",
+        headers=reader,
+    )
+    assert cohorts.status_code == 200
+    assert cohorts.json()[0]["sample_size"] == 1
+    assert cohorts.json()[0]["cohort_basis"] == "OPPORTUNITY_CREATED_AT_MONTH"
