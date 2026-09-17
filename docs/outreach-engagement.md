@@ -48,4 +48,8 @@ The shared secret must contain at least 32 characters and is stored only in depl
 
 This is a provider-neutral normalized contract, not a claim that generic SMTP supplies delivery/open/reply telemetry. Direct vendor adapters still need to translate and verify each ESP's native callback format before forwarding the normalized signed event. Generic SMTP remains send-only unless a separate provider or mailbox integration supplies outcome events.
 
-Mailbox reply ingestion, provider-specific native webhook adapters, bounce mailbox parsing, automated sentiment analysis, automatic follow-ups, and open/click tracking remain separate increments. The normalized ingestion model allows those integrations to reuse the same append-only engagement history without rewriting prior events.
+## Shared-mailbox ingestion
+
+For the shared-hosting SMTP path, MarketingIQ also has a read-only IMAP scanner documented in [Shared-mailbox engagement ingestion](mailbox-engagement.md). It records a neutral `REPLIED` event only when `In-Reply-To` / `References` match exactly one prior SMTP send, records `BOUNCED` only from explicit failed DSN data, ignores automatic replies, and never persists reply bodies or raw mailbox messages.
+
+Provider-native delivery/complaint/open/click adapters, automated sentiment analysis, and automatic follow-ups remain separate increments.
