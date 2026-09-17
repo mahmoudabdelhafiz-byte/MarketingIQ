@@ -197,7 +197,7 @@ class ProductCriterion(Base):
     """Normalized repeatable targeting values (country, industry, persona, signal, etc.)."""
 
     __tablename__ = "product_criteria"
-    __table_args__ = (UniqueConstraint("product_id", "kind", "value"),)
+    __table_args__ = (\n        UniqueConstraint(\n            "product_id", "kind", "value", name="uq_product_criteria_product_kind_value"\n        ),\n    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     product_id: Mapped[str] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"))
     kind: Mapped[str] = mapped_column(String(40))
@@ -229,7 +229,7 @@ class ICP(Base, TimestampMixin):
 
 class ICPCriterion(Base):
     __tablename__ = "icp_criteria"
-    __table_args__ = (UniqueConstraint("icp_id", "kind", "value"),)
+    __table_args__ = (\n        UniqueConstraint(\n            "icp_id", "kind", "value", name="uq_icp_criteria_icp_kind_value"\n        ),\n    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     icp_id: Mapped[str] = mapped_column(ForeignKey("icps.id", ondelete="CASCADE"))
     kind: Mapped[str] = mapped_column(String(40))
