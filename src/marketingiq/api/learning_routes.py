@@ -45,3 +45,27 @@ def register_learning_routes(
         min_sample_size: int = Query(default=1, ge=1, le=1000),
     ):
         return svc.message_angle_performance(product_id, min_sample_size)
+
+    @app.get(base + "/qualification-grade-performance")
+    def qualification_grade_performance(
+        svc: LearningService,
+        product_id: str | None = None,
+        min_sample_size: int = Query(default=1, ge=1, le=1000),
+    ):
+        return svc.qualification_grade_performance(product_id, min_sample_size)
+
+    @app.get(base + "/industry-performance")
+    def industry_performance(
+        svc: LearningService,
+        product_id: str | None = None,
+        min_sample_size: int = Query(default=1, ge=1, le=1000),
+    ):
+        return svc.industry_performance(product_id, min_sample_size)
+
+    @app.get(base + "/country-performance")
+    def country_performance(
+        svc: LearningService,
+        product_id: str | None = None,
+        min_sample_size: int = Query(default=1, ge=1, le=1000),
+    ):
+        return svc.country_performance(product_id, min_sample_size)

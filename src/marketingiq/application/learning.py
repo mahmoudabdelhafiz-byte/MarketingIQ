@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from marketingiq.application.authorization import Permission, require_permission
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.campaigns import CampaignDraft
-from marketingiq.domain.models import ContactCandidate
+from marketingiq.domain.models import ContactCandidate, LeadQualification, ProductFitAssessment
 from marketingiq.domain.pipeline import (
     OpportunityStage,
     SalesOpportunity,
@@ -22,6 +22,8 @@ FUNNEL_STAGES = (
     OpportunityStage.PROPOSAL,
     OpportunityStage.WON,
 )
+
+SNAPSHOT_DIMENSIONS = {"industry", "country"}
 
 
 class ConversionIntelligenceService:
@@ -70,6 +72,27 @@ class ConversionIntelligenceService:
     ) -> list[dict[str, Any]]:
         return self._grouped("message_angle", product_id, min_sample_size)
 
+    def qualification_grade_performance(
+        self,
+        product_id: str | None = None,
+        min_sample_size: int = 1,
+    ) -> list[dict[str, Any]]:
+        return self._grouped("qualification_grade", product_id, min_sample_size)
+
+    def industry_performance(
+        self,
+        product_id: str | None = None,
+        min_sample_size: int = 1,
+    ) -> list[dict[str, Any]]:
+        return self._grouped("industry", product_id, min_sample_size)
+
+    def country_performance(
+        self,
+        product_id: str | None = None,
+        min_sample_size: int = 1,
+    ) -> list[dict[str, Any]]:
+        return self._grouped("country", product_id, min_sample_size)
+
     def _grouped(
         self,
         dimension: str,
@@ -96,6 +119,7 @@ class ConversionIntelligenceService:
             result.append(
                 {
                     "dimension": dimension,
+                    "dimension_source": self._dimension_source(dimension),
                     "value": value,
                     "sample_size": len(items),
                     "counts": counts,
@@ -202,4 +226,74 @@ class ConversionIntelligenceService:
                 )
             )
             return {opportunity_id: angle for opportunity_id, angle in rows}
+        if dimension == "qualification_grade":
+            rows = self.session.execute(
+                select(SalesOpportunity.id, LeadQualification.qualification_grade)
+                .join(LeadQualification, LeadQualification.id == SalesOpportunity.qualification_id)
+                .where(
+                    SalesOpportunity.organization_id == self.tenant.organization_id,
+                    SalesOpportunity.id.in_(ids),
+                    LeadQualification.organization_id == self.tenant.organization_id,
+                )
+            )
+            return {
+                opportunity_id: grade.value if grade is not None else None
+                for opportunity_id, grade in rows
+            }
+        if dimension in SNAPSHOT_DIMENSIONS:
+            rows = self.session.execute(
+                select(SalesOpportunity.id, ProductFitAssessment.evidence_snapshot)
+                .join(LeadQualification, LeadQualification.id == SalesOpportunity.qualification_id)
+                .join(
+                    ProductFitAssessment,
+                    ProductFitAssessment.id == LeadQualification.fit_assessment_id,
+                )
+                .where(
+                    SalesOpportunity.organization_id == self.tenant.organization_id,
+                    SalesOpportunity.id.in_(ids),
+                    LeadQualification.organization_id == self.tenant.organization_id,
+                    ProductFitAssessment.organization_id == self.tenant.organization_id,
+                )
+            )
+            return {
+                opportunity_id: self._snapshot_dimension_value(snapshot, dimension)
+                for opportunity_id, snapshot in rows
+            }
+        raise ValueError("unsupported learning dimension")
+
+    @staticmethod
+    def _snapshot_dimension_value(snapshot: Any, fact_key: str) -> str | None:
+        if not isinstance(snapshot, list):
+            return None
+        for item in snapshot:
+            if not isinstance(item, dict) or item.get("fact_key") != fact_key:
+                continue
+            return ConversionIntelligenceService._safe_dimension_value(item.get("actual_value"))
+        return None
+
+    @staticmethod
+    def _safe_dimension_value(value: Any) -> str | None:
+        if isinstance(value, str):
+            cleaned = " ".join(value.split()).strip()
+            return cleaned[:200] or None
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, int | float):
+            return str(value)
+        if isinstance(value, list) and 0 < len(value) <= 10:
+            items = [ConversionIntelligenceService._safe_dimension_value(item) for item in value]
+            normalized = sorted({item for item in items if item})
+            return " | ".join(normalized)[:200] if normalized else None
+        return None
+
+    @staticmethod
+    def _dimension_source(dimension: str) -> str:
+        if dimension == "buyer_role":
+            return "CONTACT_CANDIDATE"
+        if dimension == "message_angle":
+            return "CAMPAIGN_DRAFT"
+        if dimension == "qualification_grade":
+            return "IMMUTABLE_LEAD_QUALIFICATION"
+        if dimension in SNAPSHOT_DIMENSIONS:
+            return "IMMUTABLE_FIT_EVIDENCE_SNAPSHOT"
         raise ValueError("unsupported learning dimension")
