@@ -1,0 +1,45 @@
+from __future__ import annotations
+
+import json
+import os
+
+from marketingiq.infrastructure.database import create_database_engine, create_session_factory
+from marketingiq.infrastructure.mailbox_engagement import (
+    IMAPMailboxReader,
+    MailboxEngagementIngestor,
+)
+
+
+def main() -> None:
+    raw_limit = os.environ.get("MAILBOX_ENGAGEMENT_BATCH_SIZE", "100")
+    try:
+        limit = int(raw_limit)
+    except ValueError as error:
+        raise RuntimeError("MAILBOX_ENGAGEMENT_BATCH_SIZE must be an integer") from error
+
+    sessions = create_session_factory(create_database_engine())
+    reader = IMAPMailboxReader()
+    with sessions() as session:
+        try:
+            result = MailboxEngagementIngestor(session, reader).run(limit=limit)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+
+    print(
+        json.dumps(
+            {
+                "processed": result.processed,
+                "matched": result.matched,
+                "replies": result.replies,
+                "bounces": result.bounces,
+                "skipped": result.skipped,
+            },
+            sort_keys=True,
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()
