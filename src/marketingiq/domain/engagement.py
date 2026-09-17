@@ -5,6 +5,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     DateTime,
     Enum,
     ForeignKey,
@@ -96,3 +97,16 @@ class OutreachEngagementEvent(Base):
         ForeignKey("users.id"), index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MailboxEngagementCheckpoint(Base):
+    """Operational cursor for one hashed mailbox identity; never stores credentials."""
+
+    __tablename__ = "mailbox_engagement_checkpoints"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    mailbox_identity: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    uid_validity: Mapped[str] = mapped_column(String(64))
+    last_processed_uid: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
