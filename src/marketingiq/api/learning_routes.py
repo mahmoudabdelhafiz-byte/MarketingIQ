@@ -78,3 +78,10 @@ def register_learning_routes(
         limit: int = Query(default=24, ge=1, le=120),
     ):
         return svc.monthly_cohorts(product_id, min_sample_size, limit)
+
+    @app.get(base + "/cycle-time")
+    def cycle_time(
+        svc: LearningService,
+        product_id: str | None = None,
+    ):
+        return svc.cycle_time(product_id)
