@@ -153,6 +153,7 @@ def _stage_event_output(item) -> dict[str, Any]:
         "sequence_number": item.sequence_number,
         "from_stage": item.from_stage,
         "to_stage": item.to_stage,
+        "source": item.source,
         "note": item.note,
         "reason_code": item.reason_code,
         "occurred_at": item.occurred_at,
