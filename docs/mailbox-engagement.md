@@ -13,6 +13,21 @@ This increment is intentionally conservative:
 
 The ingestor reuses the existing provider engagement service, so events remain append-only, system-attributed, tenant-scoped, and idempotent. Bounces automatically create the existing tenant suppression entry and never auto-unsuppress a recipient.
 
+## Durable mailbox cursor
+
+The shared-hosting cron path stores one operational checkpoint for the configured mailbox. The checkpoint contains only:
+
+- a SHA-256-derived mailbox identity fingerprint;
+- the IMAP `UIDVALIDITY` value;
+- the last successfully fetched UID;
+- checkpoint timestamps.
+
+It does not store the IMAP host, username, password, sender/recipient addresses, subject, message body, or raw mailbox content.
+
+On the first run, MarketingIQ intentionally bootstraps from only the latest configured batch window rather than importing the mailbox's full historical contents. After that, runs process the oldest unseen UIDs first, so a backlog larger than one batch is drained across successive cron executions without skipping the middle of the backlog.
+
+If the IMAP server changes `UIDVALIDITY`, the previous UID cursor is no longer trustworthy. MarketingIQ resets the cursor and safely bootstraps from the latest batch of the new mailbox generation. A failed IMAP fetch stops cursor advancement at the last successfully fetched UID so the failed message can be retried on the next run.
+
 ## Configuration
 
 Set these only in the deployment environment or secret manager:
@@ -28,7 +43,7 @@ IMAP_STARTTLS=false
 MAILBOX_ENGAGEMENT_BATCH_SIZE=100
 ```
 
-`IMAP_PASSWORD` must never be committed. The mailbox identity used for event idempotency is a SHA-256-derived fingerprint; the username is not persisted in engagement records.
+`IMAP_PASSWORD` must never be committed. The mailbox identity used for event idempotency and cursor lookup is a SHA-256-derived fingerprint; the username is not persisted in engagement or checkpoint records.
 
 ## Shared-hosting cron
 
@@ -38,9 +53,9 @@ Run the bounded scanner from cron:
 python -m marketingiq.jobs.run_mailbox_engagement
 ```
 
-Each run scans only the latest configured batch window and safely reprocesses messages because the mailbox UID plus mailbox fingerprint produces an idempotent provider event ID. The job prints only aggregate counts: processed, matched, replies, bounces, and skipped.
+Each run fetches at most the configured batch size. On an established checkpoint it selects only UIDs newer than the durable cursor, oldest first. The job prints only aggregate counts: processed, matched, replies, bounces, and skipped.
 
-A skipped message is expected when it is unrelated mail, lacks a trustworthy thread reference, is an automatic response, or cannot be matched unambiguously to exactly one prior SMTP send attempt.
+A skipped message is expected when it is unrelated mail, lacks a trustworthy thread reference, is an automatic response, or cannot be matched unambiguously to exactly one prior SMTP send attempt. Skipped messages are still considered consumed mailbox input; they do not expose or persist their private content.
 
 ## Boundaries
 
