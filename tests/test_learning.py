@@ -9,7 +9,12 @@ from marketingiq.application.learning import ConversionIntelligenceService
 from marketingiq.application.outbound import OutboundSenderRegistry
 from marketingiq.application.pipeline import SalesPipelineService
 from marketingiq.application.tenant import TenantContext
-from marketingiq.domain.models import MembershipRole
+from marketingiq.domain.models import (
+    CompanyFact,
+    DataClassification,
+    MembershipRole,
+    RedistributionStatus,
+)
 from marketingiq.domain.pipeline import OpportunityStage
 
 
@@ -87,6 +92,9 @@ def test_grouped_learning_uses_safe_aggregate_dimensions(session):
 
     roles = learning.buyer_role_performance(seeded["product"].id)
     angles = learning.message_angle_performance(seeded["product"].id)
+    grades = learning.qualification_grade_performance(seeded["product"].id)
+    industries = learning.industry_performance(seeded["product"].id)
+    countries = learning.country_performance(seeded["product"].id)
 
     assert len(roles) == 1
     assert roles[0]["sample_size"] == 1
@@ -94,7 +102,38 @@ def test_grouped_learning_uses_safe_aggregate_dimensions(session):
     assert roles[0]["rates"]["response_rate"] == 100.0
     assert len(angles) == 1
     assert angles[0]["value"] == draft.message_angle
+    assert grades[0]["value"] == "A"
+    assert grades[0]["dimension_source"] == "IMMUTABLE_LEAD_QUALIFICATION"
+    assert industries[0]["value"] == "Logistics"
+    assert industries[0]["dimension_source"] == "IMMUTABLE_FIT_EVIDENCE_SNAPSHOT"
+    assert countries[0]["value"] == "UNKNOWN"
     assert "email" not in str(roles).lower()
+    assert "email" not in str(industries).lower()
+
+
+def test_snapshot_dimension_does_not_follow_later_current_fact_change(session):
+    seeded = seed_campaign(session)
+    _draft, attempt = sent_attempt(session, seeded)
+    pipeline, learning = services(session, seeded)
+    pipeline.create(seeded["relationship"].id, attempt.id)
+
+    session.add(
+        CompanyFact(
+            company_id=seeded["company"].id,
+            fact_key="industry",
+            value="Manufacturing",
+            classification=DataClassification.PUBLIC_EVIDENCE,
+            redistribution_status=RedistributionStatus.ALLOWED,
+            confidence=99,
+            observed_at=seeded["assessment"].evaluated_at,
+        )
+    )
+    session.flush()
+
+    industries = learning.industry_performance(seeded["product"].id)
+
+    assert industries[0]["value"] == "Logistics"
+    assert "Manufacturing" not in str(industries)
 
 
 def test_minimum_sample_size_suppresses_small_groups(session):
@@ -104,6 +143,10 @@ def test_minimum_sample_size_suppresses_small_groups(session):
     pipeline.create(seeded["relationship"].id, attempt.id)
 
     assert learning.buyer_role_performance(
+        seeded["product"].id,
+        min_sample_size=2,
+    ) == []
+    assert learning.industry_performance(
         seeded["product"].id,
         min_sample_size=2,
     ) == []
@@ -168,3 +211,17 @@ def test_learning_api_is_readable_by_read_only_role(tmp_path):
     )
     assert roles.status_code == 200
     assert roles.json()[0]["sample_size"] == 1
+
+    industries = client.get(
+        learning_base + "/industry-performance",
+        headers=reader,
+    )
+    assert industries.status_code == 200
+    assert industries.json()[0]["value"] == "Logistics"
+
+    grades = client.get(
+        learning_base + "/qualification-grade-performance",
+        headers=reader,
+    )
+    assert grades.status_code == 200
+    assert grades.json()[0]["value"] == "A"
