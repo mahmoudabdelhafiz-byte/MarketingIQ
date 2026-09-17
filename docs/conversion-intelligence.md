@@ -13,6 +13,7 @@ The learning API exposes:
 - industry performance
 - country performance
 - monthly opportunity cohorts
+- observed sales-cycle timing
 
 Every grouped view reports sample size, observed funnel counts, and rates for response, meeting, proposal, win, and loss. `min_sample_size` can suppress groups that are too small for useful interpretation.
 
@@ -39,6 +40,23 @@ The response explicitly labels:
 
 Only months containing opportunities are returned. `limit` controls how many of the latest populated monthly cohorts are included and `min_sample_size` can suppress very small cohorts. The API does not calculate a trend score, forecast the next period, or label any month as better or worse.
 
+## Observed sales-cycle timing
+
+`GET /learning/cycle-time` reports elapsed hours from a successfully completed outbound send to the first observed response, meeting, proposal, and win for opportunities in the selected product scope.
+
+The start timestamp is `OutboundSendAttempt.completed_at`. Response timing prefers the earliest recorded reply engagement event and falls back to the response-stage event when the reply was recorded manually. Meeting, proposal, and win timing use the earliest corresponding pipeline stage event.
+
+For each stage, MarketingIQ reports:
+
+- observed count
+- total opportunity count
+- observation coverage percentage
+- median elapsed hours
+- minimum and maximum elapsed hours
+- count of observations excluded because the target timestamp was earlier than the send timestamp
+
+Only opportunities that have actually reached a stage contribute a duration for that stage. Unreached opportunities are therefore censored observations, and MarketingIQ does not apply a survival-analysis or censoring adjustment. The timing output is descriptive history, not a promise, SLA, forecast, or estimate of how quickly a current opportunity will progress.
+
 ## Safety and interpretation
 
 - Results are organization-scoped and require normal read permission.
@@ -46,6 +64,7 @@ Only months containing opportunities are returned. `limit` controls how many of 
 - Rates are descriptive observed outcomes with the tenant opportunity set or cohort as the denominator.
 - A larger observed rate does not prove that a buyer role, message angle, industry, country, qualification grade, or time period caused the result.
 - Recent monthly cohorts can be immature because some opportunities may not yet have had enough time to progress through later funnel stages.
+- Cycle-time medians describe only observed stage achievements and should not be interpreted as predictions for unreached opportunities.
 - No automated outbound action, scoring change, or pipeline-stage change is triggered from these reports.
 
 These measurements are intended to become part of MarketingIQ's proprietary first-party learning layer while preserving evidence lineage and historical reproducibility.
