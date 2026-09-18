@@ -27,6 +27,12 @@ shared MySQL services often close idle connections earlier than dedicated databa
 
 ## First deployment
 
+Before connecting to production services, run the offline configuration preflight:
+
+```bash
+python -m marketingiq.jobs.validate_deployment
+```
+
 Run the schema migration once against the hosting database before starting the application:
 
 ```bash
