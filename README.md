@@ -33,6 +33,10 @@ pytest
 ruff check .
 ```
 
+Production should use the guarded ASGI factory
+`marketingiq.api.production:create_production_app` after running migrations and schema
+verification; see the deployment documentation for the exact sequence.
+
 URL-encode special characters in database usernames/passwords before putting them in
 `DATABASE_URL`. `DB_POOL_RECYCLE_SECONDS` defaults to 280 seconds to reduce stale-connection
 errors common on shared MySQL hosting; `pool_pre_ping` is always enabled.
