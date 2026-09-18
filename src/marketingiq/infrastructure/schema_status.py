@@ -6,6 +6,7 @@ from pathlib import Path
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
+from alembic.util.exc import CommandError
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -43,7 +44,7 @@ def inspect_database_schema(engine: Engine) -> DatabaseSchemaStatus:
 
     try:
         expected_heads = expected_schema_heads()
-    except (OSError, ValueError):
+    except (CommandError, OSError, ValueError):
         return DatabaseSchemaStatus("migration_metadata_unavailable", (), ())
 
     try:
