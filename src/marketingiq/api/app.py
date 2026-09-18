@@ -6,8 +6,7 @@ import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from marketingiq.api.campaign_routes import register_campaign_routes
@@ -48,16 +47,13 @@ from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.models import OrganizationMembership, ReviewAction, User
 from marketingiq.infrastructure.database import create_database_engine, create_session_factory
 from marketingiq.infrastructure.providers import HunterProvider, PublicWebProvider
+from marketingiq.infrastructure.schema_status import inspect_database_schema
 
 bearer = HTTPBearer(auto_error=False)
 
 
 def _database_is_ready(engine) -> bool:
-    try:
-        with engine.connect() as connection:
-            return connection.scalar(text("SELECT 1")) == 1
-    except SQLAlchemyError:
-        return False
+    return inspect_database_schema(engine).ready
 
 
 def create_app(database_url: str | None = None, auth_secret: str | None = None) -> FastAPI:
