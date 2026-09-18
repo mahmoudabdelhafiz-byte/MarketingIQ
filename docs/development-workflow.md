@@ -5,8 +5,10 @@
 - `feature/*` branches contain focused work.
 
 Normal flow is `feature/*` → pull request to `develop` → review and tests → merge to `develop`.
-A later, separate pull request promotes `develop` to `main`. Deployment is always a separate,
-explicit action; merging does not imply deployment.
+A later, separate pull request promotes `develop` to `main`. The same hosted CI suite is required
+for pull requests targeting either `develop` or `main`, and it also reruns after pushes to both
+protected branches. Deployment is always a separate, explicit action; merging does not imply
+deployment.
 
 For this initially minimal repository, create and publish the integration branch once:
 
@@ -29,10 +31,12 @@ standard Python packaging workflow. Set `PIP_CONSTRAINT=constraints/dev.txt` bef
 editable install to reproduce those direct selections. Upgrade the project metadata and
 constraint together, then run the full suite.
 
-GitHub Actions runs Python 3.12 against MySQL 8, followed by Ruff, byte compilation, pytest, and a
-full Alembic `upgrade head` against a disposable MySQL database. `TEST_DATABASE_URL` enables tests
-marked `mysql`; without it those retained integration tests are explicitly skipped rather than
-silently using SQLite.
+GitHub Actions runs Python 3.12 against MySQL 8, followed by Ruff, byte compilation, pytest, the
+frozen baseline guard, a full Alembic `upgrade head`, and schema-readiness verification against a
+disposable MySQL database. The workflow runs on feature pushes, `develop` and `main` pushes, and
+pull requests targeting either protected branch. `TEST_DATABASE_URL` enables tests marked
+`mysql`; without it those retained integration tests are explicitly skipped rather than silently
+using SQLite.
 
 The Codex workspace's install failure is environmental: pip has no custom project index
 configuration, but its HTTPS traffic is routed through the workspace proxy, which returns HTTP
