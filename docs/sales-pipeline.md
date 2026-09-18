@@ -8,7 +8,7 @@ Each opportunity is tied to the exact organization/company relationship, company
 
 ## Automatic synchronization
 
-`python -m marketingiq.jobs.run_pipeline_sync` is the bounded, cron-safe synchronization entrypoint. `PIPELINE_SYNC_BATCH_SIZE` defaults to 100 and may be set from 1 to 500.
+`python -m marketingiq.jobs.run_pipeline_sync` is the bounded, cron-safe synchronization entrypoint. `PIPELINE_SYNC_BATCH_SIZE` defaults to 100 and may be set from 1 to 500. The command takes a zero-wait MySQL advisory lock scoped to the configured MarketingIQ database; an overlapping invocation exits successfully with `status=skipped` and `reason=already_running` instead of racing the same batch.
 
 The synchronization performs only two deterministic actions:
 
