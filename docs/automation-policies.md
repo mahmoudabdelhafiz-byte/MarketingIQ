@@ -67,7 +67,7 @@ Optional:
 
 - `AUTOMATION_CRON_BATCH_SIZE` (default `20`, maximum `100`)
 
-The cron process scans enabled policies that are due across tenants. It does not impersonate a super-admin. Instead, each policy is executed under its stored `run_as_user_id`, and that user's current tenant membership and permissions are checked before any orchestration step is executed.
+The cron process scans enabled policies that are due across tenants. It takes a zero-wait MySQL advisory lock scoped to the configured MarketingIQ database before scanning; if the same job is already running, the overlapping invocation exits successfully with `status=skipped` and `reason=already_running`. It does not impersonate a super-admin. Instead, each policy is executed under its stored `run_as_user_id`, and that user's current tenant membership and permissions are checked before any orchestration step is executed.
 
 ## Failure behavior
 
