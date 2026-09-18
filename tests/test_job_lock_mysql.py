@@ -15,7 +15,7 @@ def test_mysql_job_lock_allows_only_one_holder_and_releases_after_exit():
     engine = create_engine(url)
 
     try:
-        with mysql_job_lock(engine, "marketingiq:test-single-run") as first:
+        with mysql_job_lock(engine, "test-single-run") as first:
             assert first is True
             with mysql_job_lock(engine, "marketingiq:test-single-run") as second:
                 assert second is False
