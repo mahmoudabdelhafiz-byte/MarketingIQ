@@ -47,10 +47,14 @@ def validate_deployment_environment(
         else:
             if parsed_url.drivername != "mysql+pymysql":
                 errors.append("DATABASE_URL must use mysql+pymysql for shared-hosting deployment")
+            if parsed_url.password == "change-me":
+                errors.append("DATABASE_URL must not use the example database password")
 
     auth_secret = values.get("AUTH_SECRET", "")
     if len(auth_secret) < 32:
         errors.append("AUTH_SECRET must contain at least 32 characters")
+    elif auth_secret == "replace-with-a-random-development-value":
+        errors.append("AUTH_SECRET must not use the example development value")
 
     _validate_int(
         values,
