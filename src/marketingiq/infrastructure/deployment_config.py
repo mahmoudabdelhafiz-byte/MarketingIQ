@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
 
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
@@ -10,6 +11,7 @@ from sqlalchemy.exc import ArgumentError
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
 _PRODUCTION_ENVIRONMENT = "production"
+_BACKUP_STRATEGIES = {"operator_managed", "provider_managed"}
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,37 @@ def validate_deployment_environment(
         errors.append("AUTH_SECRET must contain at least 32 characters")
     elif auth_secret == "replace-with-a-random-development-value":
         errors.append("AUTH_SECRET must not use the example development value")
+
+    backup_strategy = values.get("DATABASE_BACKUP_STRATEGY", "").strip().lower()
+    if backup_strategy not in _BACKUP_STRATEGIES:
+        errors.append(
+            "DATABASE_BACKUP_STRATEGY must be provider_managed or operator_managed"
+        )
+
+    retention_raw = values.get("DATABASE_BACKUP_RETENTION_DAYS", "").strip()
+    if not retention_raw:
+        errors.append("DATABASE_BACKUP_RETENTION_DAYS is required")
+    else:
+        _validate_int(
+            values,
+            errors,
+            "DATABASE_BACKUP_RETENTION_DAYS",
+            default=retention_raw,
+            minimum=1,
+            maximum=3650,
+        )
+
+    restore_test_raw = values.get("DATABASE_RESTORE_TEST_DATE", "").strip()
+    if not restore_test_raw:
+        errors.append("DATABASE_RESTORE_TEST_DATE is required")
+    else:
+        try:
+            restore_test_date = date.fromisoformat(restore_test_raw)
+        except ValueError:
+            errors.append("DATABASE_RESTORE_TEST_DATE must use YYYY-MM-DD")
+        else:
+            if restore_test_date > date.today():
+                errors.append("DATABASE_RESTORE_TEST_DATE must not be in the future")
 
     _validate_int(
         values,

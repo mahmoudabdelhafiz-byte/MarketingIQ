@@ -6,6 +6,9 @@ def _valid_env() -> dict[str, str]:
         "APP_ENV": "production",
         "DATABASE_URL": "mysql+pymysql://marketingiq:secret@db.example/marketingiq?charset=utf8mb4",
         "AUTH_SECRET": "a-secure-production-secret-that-is-long-enough",
+        "DATABASE_BACKUP_STRATEGY": "provider_managed",
+        "DATABASE_BACKUP_RETENTION_DAYS": "7",
+        "DATABASE_RESTORE_TEST_DATE": "2026-09-01",
     }
 
 
@@ -126,3 +129,53 @@ def test_deployment_preflight_requires_production_environment():
 
     assert report.ok is False
     assert "APP_ENV must be production for deployment preflight" in report.errors
+
+
+def test_database_recovery_readiness_is_required():
+    env = {
+        **_valid_env(),
+        "DATABASE_BACKUP_STRATEGY": "",
+        "DATABASE_BACKUP_RETENTION_DAYS": "",
+        "DATABASE_RESTORE_TEST_DATE": "",
+    }
+
+    report = validate_deployment_environment(env)
+
+    assert report.ok is False
+    assert (
+        "DATABASE_BACKUP_STRATEGY must be provider_managed or operator_managed"
+        in report.errors
+    )
+    assert "DATABASE_BACKUP_RETENTION_DAYS is required" in report.errors
+    assert "DATABASE_RESTORE_TEST_DATE is required" in report.errors
+
+
+def test_database_recovery_readiness_values_are_validated():
+    env = {
+        **_valid_env(),
+        "DATABASE_BACKUP_STRATEGY": "unknown",
+        "DATABASE_BACKUP_RETENTION_DAYS": "0",
+        "DATABASE_RESTORE_TEST_DATE": "2999-01-01",
+    }
+
+    report = validate_deployment_environment(env)
+
+    assert report.ok is False
+    assert (
+        "DATABASE_BACKUP_STRATEGY must be provider_managed or operator_managed"
+        in report.errors
+    )
+    assert "DATABASE_BACKUP_RETENTION_DAYS must be between 1 and 3650" in report.errors
+    assert "DATABASE_RESTORE_TEST_DATE must not be in the future" in report.errors
+
+
+def test_database_restore_test_date_must_use_iso_date():
+    env = {
+        **_valid_env(),
+        "DATABASE_RESTORE_TEST_DATE": "01/09/2026",
+    }
+
+    report = validate_deployment_environment(env)
+
+    assert report.ok is False
+    assert "DATABASE_RESTORE_TEST_DATE must use YYYY-MM-DD" in report.errors

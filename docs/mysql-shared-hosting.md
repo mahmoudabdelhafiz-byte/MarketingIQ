@@ -43,6 +43,10 @@ Alembic has no checked-in fallback database URL. Keep the production MySQL `DATA
 exported in the same shell or hosting command environment used for migration execution. Migration
 commands fail closed when `DATABASE_URL` is missing, malformed, or not `mysql+pymysql`.
 
+Before the first production migration, complete the
+[database backup and restore readiness](database-backup-restore.md) runbook, perform a restore
+rehearsal, and create or confirm a fresh recoverable backup of the production database.
+
 Run the schema migration once against the hosting database before starting the application:
 
 ```bash
@@ -57,6 +61,23 @@ behind/ahead of the code's expected head. It never executes a migration.
 Do not run development seed data automatically in production. A successful GitHub CI migration
 check proves the migration chain against a clean MySQL 8 database, but it does not prove that a
 specific hosting database has been migrated.
+
+## Production ASGI entrypoint
+
+Use the fail-closed production factory rather than the local-development factory:
+
+```bash
+uvicorn 'marketingiq.api.production:create_production_app' --factory --host 127.0.0.1 --port 8000
+```
+
+Adapt the bind address and port to the hosting provider or reverse proxy. The factory runs the
+offline deployment configuration validation before constructing the FastAPI application. Invalid
+`APP_ENV`, database URL, auth secret, batch limits, or partially configured optional integrations
+therefore prevent the production process from starting. The factory does not run migrations,
+connect to providers, send outbound traffic, or install cron jobs.
+
+`marketingiq.api.app:create_app` remains suitable for local development and tests; the documented
+production process should use `marketingiq.api.production:create_production_app`.
 
 ## Health checks
 
