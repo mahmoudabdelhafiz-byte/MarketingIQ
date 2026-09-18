@@ -43,6 +43,10 @@ Alembic has no checked-in fallback database URL. Keep the production MySQL `DATA
 exported in the same shell or hosting command environment used for migration execution. Migration
 commands fail closed when `DATABASE_URL` is missing, malformed, or not `mysql+pymysql`.
 
+Before the first production migration, complete the
+[database backup and restore readiness](database-backup-restore.md) runbook, perform a restore
+rehearsal, and create or confirm a fresh recoverable backup of the production database.
+
 Run the schema migration once against the hosting database before starting the application:
 
 ```bash
