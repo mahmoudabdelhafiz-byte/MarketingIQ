@@ -3,6 +3,7 @@ from marketingiq.infrastructure.deployment_config import validate_deployment_env
 
 def _valid_env() -> dict[str, str]:
     return {
+        "APP_ENV": "production",
         "DATABASE_URL": "mysql+pymysql://marketingiq:secret@db.example/marketingiq?charset=utf8mb4",
         "AUTH_SECRET": "a-secure-production-secret-that-is-long-enough",
     }
@@ -113,3 +114,15 @@ def test_example_credentials_are_rejected():
 
     assert "DATABASE_URL must not use the example database password" in report.errors
     assert "AUTH_SECRET must not use the example development value" in report.errors
+
+
+def test_deployment_preflight_requires_production_environment():
+    env = {
+        **_valid_env(),
+        "APP_ENV": "staging",
+    }
+
+    report = validate_deployment_environment(env)
+
+    assert report.ok is False
+    assert "APP_ENV must be production for deployment preflight" in report.errors
