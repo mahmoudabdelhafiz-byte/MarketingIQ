@@ -19,6 +19,7 @@ The preflight requires:
 
 - `DATABASE_URL` using `mysql+pymysql`, matching the current MySQL 8 shared-hosting target;
 - `AUTH_SECRET` with at least 32 characters;
+- rejection of the checked-in example database password and example development auth secret;
 - a positive `DB_POOL_RECYCLE_SECONDS`;
 - bounded cron batch sizes matching the application limits:
   - `AUTOMATION_CRON_BATCH_SIZE`: 1–100;
