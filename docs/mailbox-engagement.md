@@ -53,7 +53,7 @@ Run the bounded scanner from cron:
 python -m marketingiq.jobs.run_mailbox_engagement
 ```
 
-Each run fetches at most the configured batch size. On an established checkpoint it selects only UIDs newer than the durable cursor, oldest first. The job prints only aggregate counts: processed, matched, replies, bounces, and skipped.
+Each run first takes a zero-wait MySQL advisory lock scoped to the configured MarketingIQ database. If the same mailbox job is already running, the overlapping invocation exits successfully with `status=skipped` and `reason=already_running`, avoiding concurrent cursor scans. Otherwise it fetches at most the configured batch size. On an established checkpoint it selects only UIDs newer than the durable cursor, oldest first. The job prints only aggregate counts: processed, matched, replies, bounces, and skipped.
 
 A skipped message is expected when it is unrelated mail, lacks a trustworthy thread reference, is an automatic response, or cannot be matched unambiguously to exactly one prior SMTP send attempt. Skipped messages are still considered consumed mailbox input; they do not expose or persist their private content.
 
