@@ -51,18 +51,40 @@ from marketingiq.infrastructure.schema_status import inspect_database_schema
 
 bearer = HTTPBearer(auto_error=False)
 
+_ALLOWED_APP_ENVIRONMENTS = {"development", "test", "staging", "production"}
+_EXAMPLE_AUTH_SECRET = "replace-with-a-random-development-value"
+
+
+def _application_environment() -> str:
+    value = os.environ.get("APP_ENV", "development").strip().lower()
+    if value not in _ALLOWED_APP_ENVIRONMENTS:
+        allowed = ", ".join(sorted(_ALLOWED_APP_ENVIRONMENTS))
+        raise RuntimeError(f"APP_ENV must be one of: {allowed}")
+    return value
+
 
 def _database_is_ready(engine) -> bool:
     return inspect_database_schema(engine).ready
 
 
 def create_app(database_url: str | None = None, auth_secret: str | None = None) -> FastAPI:
+    environment = _application_environment()
     secret = auth_secret or os.environ.get("AUTH_SECRET")
     if not secret or len(secret) < 32:
         raise RuntimeError("AUTH_SECRET must contain at least 32 characters")
+    if secret == _EXAMPLE_AUTH_SECRET:
+        raise RuntimeError("AUTH_SECRET must not use the example development value")
     engine = create_database_engine(database_url)
     sessions = create_session_factory(engine)
-    app = FastAPI(title="MarketingIQ internal API", version="1.0.0")
+    production = environment == "production"
+    app = FastAPI(
+        title="MarketingIQ internal API",
+        version="1.0.0",
+        docs_url=None if production else "/docs",
+        redoc_url=None if production else "/redoc",
+        openapi_url=None if production else "/openapi.json",
+    )
+    app.state.environment = environment
     app.state.provider_registry = ProviderRegistry([PublicWebProvider(), HunterProvider()])
 
     @app.get("/health/live", include_in_schema=False)

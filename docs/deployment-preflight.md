@@ -17,6 +17,7 @@ IMAP, OpenAI, Hunter, or any other provider, and it never sends outbound traffic
 
 The preflight requires:
 
+- `APP_ENV=production`, so the deployed runtime uses production-safe API behavior;
 - `DATABASE_URL` using `mysql+pymysql`, matching the current MySQL 8 shared-hosting target;
 - `AUTH_SECRET` with at least 32 characters;
 - rejection of the checked-in example database password and example development auth secret;
@@ -64,7 +65,7 @@ responses.
 
 For the initial shared-hosting deployment, use this order:
 
-1. inject environment variables and secrets;
+1. inject environment variables and secrets, including `APP_ENV=production`;
 2. run the offline configuration preflight;
 3. create or confirm the hosting MySQL database and dedicated user;
 4. keep the validated MySQL `DATABASE_URL` exported and run `alembic upgrade head` explicitly; Alembic has no checked-in fallback URL;

@@ -17,10 +17,16 @@ contact, campaign, and evidence text can safely store full Unicode.
 Recommended environment variables:
 
 ```text
+APP_ENV=production
 DATABASE_URL=mysql+pymysql://USER:PASSWORD@HOST:3306/DATABASE?charset=utf8mb4
 DB_POOL_RECYCLE_SECONDS=280
 AUTH_SECRET=<at-least-32-random-characters>
 ```
+
+Production startup rejects unknown `APP_ENV` values and the checked-in example development
+`AUTH_SECRET`. When `APP_ENV=production`, FastAPI's interactive documentation and OpenAPI
+document endpoints are disabled; authenticated application API routes and health probes remain
+available.
 
 `pool_pre_ping` is enabled automatically. The recycle interval is deliberately short because
 shared MySQL services often close idle connections earlier than dedicated database servers.

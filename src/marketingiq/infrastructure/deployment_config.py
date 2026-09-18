@@ -9,6 +9,7 @@ from sqlalchemy.exc import ArgumentError
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
+_PRODUCTION_ENVIRONMENT = "production"
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,10 @@ def validate_deployment_environment(
 
     values = os.environ if env is None else env
     errors: list[str] = []
+
+    app_environment = values.get("APP_ENV", "").strip().lower()
+    if app_environment != _PRODUCTION_ENVIRONMENT:
+        errors.append("APP_ENV must be production for deployment preflight")
 
     database_url = values.get("DATABASE_URL", "").strip()
     if not database_url:
