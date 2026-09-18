@@ -75,6 +75,16 @@ checks.
 
 ## Security
 
+When `APP_ENV=production`, every API response includes `Cache-Control: no-store`,
+`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
+and a restrictive `Permissions-Policy` for camera, microphone, and geolocation. These headers
+reduce accidental caching and browser embedding/content-sniffing exposure without changing API
+authorization behavior.
+
+HTTP Strict Transport Security is intentionally not emitted by the application yet. HSTS should be
+enabled only after HTTPS termination and forwarded-scheme handling are verified on the actual
+hosting/reverse-proxy path, so an incorrectly detected HTTP deployment is not pinned accidentally.
+
 Use a dedicated MySQL user with access only to the MarketingIQ database. Enable TLS for the MySQL
 connection if the hosting provider offers or requires it. Store the database password,
 `AUTH_SECRET`, and provider API keys only in hosting environment variables or its secret facility.
