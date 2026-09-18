@@ -77,3 +77,5 @@ jobs:
           PY
       - name: Verify Alembic upgrade to head on MySQL
         run: DATABASE_URL="$TEST_DATABASE_URL" alembic upgrade head
+      - name: Verify database schema readiness
+        run: DATABASE_URL="$TEST_DATABASE_URL" python -m marketingiq.jobs.verify_database_schema
