@@ -19,7 +19,7 @@ def main() -> None:
 
     engine = create_database_engine()
     registry = ProviderRegistry([PublicWebProvider(), HunterProvider()])
-    with mysql_job_lock(engine, "marketingiq:automation-policies") as acquired:
+    with mysql_job_lock(engine, "automation-policies") as acquired:
         if not acquired:
             print(json.dumps({"reason": "already_running", "status": "skipped"}, sort_keys=True))
             return
