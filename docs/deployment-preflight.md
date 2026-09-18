@@ -70,9 +70,10 @@ For the initial shared-hosting deployment, use this order:
 3. create or confirm the hosting MySQL database and dedicated user;
 4. keep the validated MySQL `DATABASE_URL` exported and run `alembic upgrade head` explicitly; Alembic has no checked-in fallback URL;
 5. run `python -m marketingiq.jobs.verify_database_schema` and require a successful current-schema result;
-6. start the API and verify `/health/live` and `/health/ready`; readiness also requires the database schema to match the code's Alembic head;
-7. configure cron jobs separately only for the bounded jobs that are intentionally enabled; each scheduled entrypoint uses a database-scoped zero-wait MySQL advisory lock to skip overlapping invocations;
-8. verify SMTP/IMAP/provider connectivity through their controlled operational paths.
+6. start the API through `marketingiq.api.production:create_production_app` (for example with Uvicorn `--factory`) so production configuration is revalidated at process startup;
+7. verify `/health/live` and `/health/ready`; readiness also requires the database schema to match the code's Alembic head;
+8. configure cron jobs separately only for the bounded jobs that are intentionally enabled; each scheduled entrypoint uses a database-scoped zero-wait MySQL advisory lock to skip overlapping invocations;
+9. verify SMTP/IMAP/provider connectivity through their controlled operational paths.
 
 Passing the preflight is not a production deployment and does not execute migrations, install
 cron jobs, enable outbound sending, or validate external-provider credentials.
