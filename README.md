@@ -51,6 +51,7 @@ schema.
 - [Architecture, tenancy, provenance and security](docs/architecture.md)
 - [Development workflow](docs/development-workflow.md)
 - [Deployment configuration preflight](docs/deployment-preflight.md)
+- [Database backup and restore readiness](docs/database-backup-restore.md)
 - [Sprint boundaries](docs/sprint-boundaries.md)
 - [Company repository and CSV import](docs/company-repository.md)
 - [ADR 0001: modular monolith and shared company identity](docs/adr/0001-foundation.md)
