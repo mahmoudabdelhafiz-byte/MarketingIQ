@@ -31,7 +31,7 @@ def upgrade() -> None:
             op.execute(f"UPDATE products SET {name}='[]'")
         with op.batch_alter_table("products") as batch:
             for name in missing_roles:
-                batch.alter_column(name, nullable=False)
+                batch.alter_column(name, existing_type=sa.JSON(), nullable=False)
 
     if "lead_qualifications" in inspector.get_table_names():
         return
