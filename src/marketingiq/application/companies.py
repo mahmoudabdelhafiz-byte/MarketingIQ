@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from marketingiq.application.authorization import IMPORT_ROLES, WRITE_ROLES, require_membership
+from marketingiq.application.authorization import Permission, require_permission
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.models import (
     AuditLog,
@@ -145,10 +145,8 @@ class CompanyService:
         self.session = session
         self.tenant = tenant
 
-    def _authorize(self, roles=None) -> None:
-        require_membership(
-            self.session, self.tenant.organization_id, self.tenant.actor_user_id, roles
-        )
+    def _authorize(self, permission: Permission = Permission.READ) -> None:
+        require_permission(self.tenant, permission)
 
     def _audit(self, action: str, entity_type: str, entity_id: str, metadata=None) -> None:
         self.session.add(
@@ -198,7 +196,7 @@ class CompanyService:
         private_notes: str | None = None,
         shared_values: dict[str, Any] | None = None,
     ) -> OrganizationCompany:
-        self._authorize(WRITE_ROLES)
+        self._authorize(Permission.WRITE_CATALOG)
         normalized = normalize_domain(domain)
         company = self._company_by_domain(normalized)
         if company is None:
@@ -237,7 +235,7 @@ class CompanyService:
     def update_relationship(
         self, relationship_id: str, *, lifecycle_status: str | None, private_notes: str | None
     ) -> OrganizationCompany:
-        self._authorize(WRITE_ROLES)
+        self._authorize(Permission.WRITE_CATALOG)
         relationship = self.get_company(relationship_id)
         relationship.lifecycle_status = lifecycle_status
         relationship.private_notes = private_notes
@@ -247,7 +245,7 @@ class CompanyService:
     def get_or_create_source(
         self, provider_key: str, display_name: str, external_reference: str | None = None
     ) -> DataSource:
-        self._authorize(WRITE_ROLES)
+        self._authorize(Permission.WRITE_CATALOG)
         key = provider_key.strip().upper()
         if key not in ALLOWED_SOURCE_KEYS:
             raise ValueError("Only MANUAL and CSV data sources may be created in Sprint 1")
@@ -289,7 +287,7 @@ class CompanyService:
         )
 
     def add_fact(self, relationship_id: str, data: FactInput) -> CompanyFact:
-        self._authorize(WRITE_ROLES)
+        self._authorize(Permission.WRITE_CATALOG)
         relationship = self.get_company(relationship_id)
         if not data.fact_key.strip() or not 0 <= data.confidence <= 100:
             raise ValueError("fact_key and confidence from 0 through 100 are required")
@@ -342,7 +340,7 @@ class CompanyService:
         return fact
 
     def preview_csv(self, content: str | bytes) -> ImportReport:
-        self._authorize(IMPORT_ROLES)
+        self._authorize(Permission.IMPORT_COMPANIES)
         text = self._decode_csv(content)
         reader = csv.DictReader(io.StringIO(text))
         if reader.fieldnames is None:

@@ -25,6 +25,8 @@ from marketingiq.domain.models import (
 class CriterionData:
     kind: str
     value: str
+    weight: int = 3
+    required: bool = False
 
 
 def normalize_criteria(
@@ -37,7 +39,12 @@ def normalize_criteria(
             normalized.append(criterion)
         else:
             normalized.append(
-                CriterionData(kind=str(criterion["kind"]), value=str(criterion["value"]))
+                CriterionData(
+                    kind=str(criterion["kind"]),
+                    value=str(criterion["value"]),
+                    weight=int(criterion.get("weight", 3)),
+                    required=bool(criterion.get("required", False)),
+                )
             )
     return normalized
 
@@ -93,6 +100,8 @@ class CatalogService:
 
     def create_product(self, **data: object) -> Product:
         require_permission(self.tenant, Permission.WRITE_CATALOG)
+        if data.get("primary_buyer_roles") or data.get("secondary_buyer_roles"):
+            require_permission(self.tenant, Permission.MANAGE_BUYER_ROLES)
         criteria = normalize_criteria(data.pop("criteria", []))
         allowed = {
             key: data[key]
@@ -103,6 +112,8 @@ class CatalogService:
                 "value_proposition",
                 "employee_min",
                 "employee_max",
+                "primary_buyer_roles",
+                "secondary_buyer_roles",
             )
             if key in data
         }
@@ -117,6 +128,12 @@ class CatalogService:
     def update_product(self, product_id: str, **data: object) -> Product:
         require_permission(self.tenant, Permission.WRITE_CATALOG)
         product = self.get_product(product_id)
+        role_configuration_changed = any(
+            key in data and data[key] != getattr(product, key)
+            for key in ("primary_buyer_roles", "secondary_buyer_roles")
+        )
+        if role_configuration_changed:
+            require_permission(self.tenant, Permission.MANAGE_BUYER_ROLES)
         raw_criteria = data.pop("criteria", None)
         criteria = normalize_criteria(raw_criteria) if raw_criteria is not None else None
         for key in (
@@ -126,6 +143,8 @@ class CatalogService:
             "value_proposition",
             "employee_min",
             "employee_max",
+            "primary_buyer_roles",
+            "secondary_buyer_roles",
         ):
             if key in data:
                 setattr(product, key, data[key])
@@ -169,9 +188,13 @@ class CatalogService:
         self.get_product(product_id)
         criteria = normalize_criteria(data.pop("criteria", []))
         icp = ICP(organization_id=self.tenant.organization_id, product_id=product_id, **data)
-        icp.criteria = [ICPCriterion(kind=x.kind, value=x.value) for x in criteria]
+        icp.criteria = [
+            ICPCriterion(kind=x.kind, value=x.value, weight=x.weight, required=x.required)
+            for x in criteria
+        ]
         self.session.add(icp)
         self._flush()
+        icp.logical_id = icp.id
         _audit(self.session, self.tenant, "icp.created", icp)
         self._commit()
         return icp
@@ -182,7 +205,10 @@ class CatalogService:
         old = self.get_icp(icp_id)
         old.is_active = False
         criteria = normalize_criteria(
-            data.pop("criteria", [CriterionData(x.kind, x.value) for x in old.criteria])
+            data.pop(
+                "criteria",
+                [CriterionData(x.kind, x.value, x.weight, x.required) for x in old.criteria],
+            )
         )
         values = {k: data.pop(k, getattr(old, k)) for k in ("name", "employee_min", "employee_max")}
         revision = ICP(
@@ -190,9 +216,13 @@ class CatalogService:
             product_id=old.product_id,
             version=old.version + 1,
             is_active=data.pop("is_active", True),
+            logical_id=old.logical_id or old.id,
             **values,
         )
-        revision.criteria = [ICPCriterion(kind=x.kind, value=x.value) for x in criteria]
+        revision.criteria = [
+            ICPCriterion(kind=x.kind, value=x.value, weight=x.weight, required=x.required)
+            for x in criteria
+        ]
         self.session.add(revision)
         self._flush()
         _audit(self.session, self.tenant, "icp.revised", revision)

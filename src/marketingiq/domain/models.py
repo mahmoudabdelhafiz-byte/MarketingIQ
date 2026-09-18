@@ -15,6 +15,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -55,6 +56,13 @@ class RedistributionStatus(enum.StrEnum):
     INTERNAL_ONLY = "INTERNAL_ONLY"
 
 
+class ReviewAction(enum.StrEnum):
+    APPROVE = "APPROVE"
+    SELECT = "SELECT"
+    MANUAL_CORRECTION = "MANUAL_CORRECTION"
+    RESOLVE_CONFLICT = "RESOLVE_CONFLICT"
+
+
 class MembershipRole(enum.StrEnum):
     ORGANIZATION_ADMIN = "ORGANIZATION_ADMIN"
     MARKETING_USER = "MARKETING_USER"
@@ -70,8 +78,64 @@ class ProductStatus(enum.StrEnum):
 class ResearchStatus(enum.StrEnum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
-    SUCCEEDED = "SUCCEEDED"
+    COMPLETED = "COMPLETED"
+    PARTIAL = "PARTIAL"
     FAILED = "FAILED"
+
+
+class ResearchMode(enum.StrEnum):
+    PUBLIC_ONLY = "PUBLIC_ONLY"
+    PUBLIC_THEN_EXTERNAL = "PUBLIC_THEN_EXTERNAL"
+    EXTERNAL_ONLY = "EXTERNAL_ONLY"
+
+
+class FitGrade(enum.StrEnum):
+    A = "A"
+    B = "B"
+    C = "C"
+    D = "D"
+    UNKNOWN = "UNKNOWN"
+
+
+class FitStatus(enum.StrEnum):
+    COMPLETE = "COMPLETE"
+    PARTIAL = "PARTIAL"
+    NEEDS_MORE_RESEARCH = "NEEDS_MORE_RESEARCH"
+    CONFLICTED = "CONFLICTED"
+    STALE = "STALE"
+
+
+class QualificationGrade(enum.StrEnum):
+    A = "A"
+    B = "B"
+    C = "C"
+    D = "D"
+    UNKNOWN = "UNKNOWN"
+
+
+class QualificationStatus(enum.StrEnum):
+    HIGH_PRIORITY = "HIGH_PRIORITY"
+    QUALIFIED = "QUALIFIED"
+    NURTURE = "NURTURE"
+    NEEDS_MORE_RESEARCH = "NEEDS_MORE_RESEARCH"
+    NOT_QUALIFIED = "NOT_QUALIFIED"
+    STALE = "STALE"
+
+
+class BuyerRoleMatch(enum.StrEnum):
+    EXACT = "EXACT"
+    STRONG = "STRONG"
+    PARTIAL = "PARTIAL"
+    UNKNOWN = "UNKNOWN"
+
+
+class EmailVerificationStatus(enum.StrEnum):
+    UNKNOWN = "UNKNOWN"
+    VALID = "VALID"
+    INVALID = "INVALID"
+    ACCEPT_ALL = "ACCEPT_ALL"
+    RISKY = "RISKY"
+    UNVERIFIABLE = "UNVERIFIABLE"
 
 
 class Organization(Base, TimestampMixin):
@@ -118,6 +182,8 @@ class Product(Base, TimestampMixin):
     value_proposition: Mapped[str | None] = mapped_column(Text)
     employee_min: Mapped[int | None] = mapped_column(Integer)
     employee_max: Mapped[int | None] = mapped_column(Integer)
+    primary_buyer_roles: Mapped[list[str]] = mapped_column(JSON, default=list)
+    secondary_buyer_roles: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[ProductStatus] = mapped_column(
         Enum(ProductStatus, native_enum=False, validate_strings=True, create_constraint=True),
         default=ProductStatus.DRAFT,
@@ -131,11 +197,15 @@ class ProductCriterion(Base):
     """Normalized repeatable targeting values (country, industry, persona, signal, etc.)."""
 
     __tablename__ = "product_criteria"
-    __table_args__ = (UniqueConstraint("product_id", "kind", "value"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "product_id", "kind", "value", name="uq_product_criteria_product_kind_value"
+        ),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     product_id: Mapped[str] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"))
     kind: Mapped[str] = mapped_column(String(40))
-    value: Mapped[str] = mapped_column(Text)
+    value: Mapped[str] = mapped_column(String(500))
 
 
 class ICP(Base, TimestampMixin):
@@ -149,6 +219,7 @@ class ICP(Base, TimestampMixin):
         ),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    logical_id: Mapped[str | None] = mapped_column(String(36), index=True)
     organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
     product_id: Mapped[str] = mapped_column(String(36))
     name: Mapped[str] = mapped_column(String(200))
@@ -162,11 +233,17 @@ class ICP(Base, TimestampMixin):
 
 class ICPCriterion(Base):
     __tablename__ = "icp_criteria"
-    __table_args__ = (UniqueConstraint("icp_id", "kind", "value"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "icp_id", "kind", "value", name="uq_icp_criteria_icp_kind_value"
+        ),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     icp_id: Mapped[str] = mapped_column(ForeignKey("icps.id", ondelete="CASCADE"))
     kind: Mapped[str] = mapped_column(String(40))
-    value: Mapped[str] = mapped_column(Text)
+    value: Mapped[str] = mapped_column(String(500))
+    weight: Mapped[int] = mapped_column(Integer, default=3)
+    required: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Company(Base, TimestampMixin):
@@ -212,6 +289,100 @@ class OrganizationCompany(Base, TimestampMixin):
     company: Mapped[Company] = relationship()
 
 
+class ProductFitAssessment(Base):
+    """Immutable, versioned result built from a safe current-best fact snapshot."""
+
+    __tablename__ = "product_fit_assessments"
+    __table_args__ = (
+        CheckConstraint("score >= 0 AND score <= 100", name="ck_fit_score"),
+        CheckConstraint(
+            "evidence_coverage >= 0 AND evidence_coverage <= 100", name="ck_fit_coverage"
+        ),
+        Index(
+            "ix_fit_tenant_relationship_time",
+            "organization_id",
+            "organization_company_id",
+            "evaluated_at",
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), index=True)
+    organization_company_id: Mapped[str] = mapped_column(
+        ForeignKey("organization_companies.id"), index=True
+    )
+    product_id: Mapped[str] = mapped_column(ForeignKey("products.id"), index=True)
+    icp_id: Mapped[str] = mapped_column(ForeignKey("icps.id"), index=True)
+    icp_version: Mapped[int] = mapped_column(Integer)
+    score: Mapped[int] = mapped_column(Integer)
+    evidence_coverage: Mapped[int] = mapped_column(Integer)
+    confidence: Mapped[str] = mapped_column(String(20))
+    grade: Mapped[FitGrade] = mapped_column(
+        Enum(FitGrade, native_enum=False, validate_strings=True, create_constraint=True)
+    )
+    status: Mapped[FitStatus] = mapped_column(
+        Enum(FitStatus, native_enum=False, validate_strings=True, create_constraint=True)
+    )
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    workflow_version: Mapped[str] = mapped_column(String(100))
+    evidence_snapshot: Mapped[Any] = mapped_column(JSON)
+    explanation: Mapped[Any] = mapped_column(JSON)
+    classification: Mapped[DataClassification] = mapped_column(
+        Enum(DataClassification, native_enum=False, validate_strings=True, create_constraint=True),
+        default=DataClassification.MARKETINGIQ_DERIVED,
+    )
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+
+
+class LeadQualification(Base):
+    """Immutable tenant-owned actionability decision derived from a fit assessment."""
+
+    __tablename__ = "lead_qualifications"
+    __table_args__ = (
+        CheckConstraint(
+            "qualification_score >= 0 AND qualification_score <= 100",
+            name="ck_qualification_score",
+        ),
+        Index(
+            "ix_qualification_tenant_relationship_time",
+            "organization_id",
+            "organization_company_id",
+            "qualified_at",
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    organization_company_id: Mapped[str] = mapped_column(
+        ForeignKey("organization_companies.id"), index=True
+    )
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey("products.id"), index=True)
+    fit_assessment_id: Mapped[str] = mapped_column(
+        ForeignKey("product_fit_assessments.id"), index=True
+    )
+    qualification_score: Mapped[int] = mapped_column(Integer)
+    qualification_grade: Mapped[QualificationGrade] = mapped_column(
+        Enum(QualificationGrade, native_enum=False, validate_strings=True, create_constraint=True)
+    )
+    status: Mapped[QualificationStatus] = mapped_column(
+        Enum(QualificationStatus, native_enum=False, validate_strings=True, create_constraint=True)
+    )
+    confidence: Mapped[str] = mapped_column(String(20))
+    recommended_buyer_role: Mapped[str] = mapped_column(String(200))
+    buyer_role_confidence: Mapped[str] = mapped_column(String(20))
+    alternative_buyer_roles: Mapped[Any] = mapped_column(JSON)
+    reasons: Mapped[Any] = mapped_column(JSON)
+    research_gaps: Mapped[Any] = mapped_column(JSON)
+    component_scores: Mapped[Any] = mapped_column(JSON)
+    workflow_version: Mapped[str] = mapped_column(String(100))
+    qualified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    classification: Mapped[DataClassification] = mapped_column(
+        Enum(DataClassification, native_enum=False, validate_strings=True, create_constraint=True),
+        default=DataClassification.MARKETINGIQ_DERIVED,
+    )
+
+
 class DataSource(Base, TimestampMixin):
     __tablename__ = "data_sources"
     __table_args__ = (UniqueConstraint("provider_key", "external_reference"),)
@@ -229,12 +400,105 @@ class ResearchRun(Base, TimestampMixin):
     company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), index=True)
     initiated_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
     purpose: Mapped[str] = mapped_column(String(100))
+    mode: Mapped[ResearchMode] = mapped_column(
+        Enum(ResearchMode, native_enum=False, validate_strings=True, create_constraint=True),
+        default=ResearchMode.PUBLIC_ONLY,
+    )
     status: Mapped[ResearchStatus] = mapped_column(
         Enum(ResearchStatus, native_enum=False, validate_strings=True, create_constraint=True),
         default=ResearchStatus.PENDING,
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    providers_attempted: Mapped[list[str]] = mapped_column(JSON, default=list)
+    providers_succeeded: Mapped[list[str]] = mapped_column(JSON, default=list)
+    error_summary: Mapped[str | None] = mapped_column(Text)
+    workflow_version: Mapped[str | None] = mapped_column(String(100))
+
+
+class ProviderUsage(Base):
+    """Sanitized accounting record; provider response bodies never belong here."""
+
+    __tablename__ = "provider_usage"
+    __table_args__ = (Index("ix_provider_usage_org_requested", "organization_id", "requested_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    provider_key: Mapped[str] = mapped_column(String(100), index=True)
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), index=True)
+    operation: Mapped[str] = mapped_column(String(100))
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    success: Mapped[bool] = mapped_column(Boolean, default=False)
+    response_status: Mapped[str] = mapped_column(String(50), default="PENDING")
+    credits_used: Mapped[int | None] = mapped_column(Integer)
+    estimated_cost: Mapped[Any | None] = mapped_column(Numeric(12, 4))
+    credits_remaining: Mapped[int | None] = mapped_column(Integer)
+    request_identifier: Mapped[str | None] = mapped_column(String(255))
+    error_category: Mapped[str | None] = mapped_column(String(100))
+    cache_hit: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class ContactCandidate(Base):
+    """A minimal, tenant-private B2B professional contact observation."""
+
+    __tablename__ = "contact_candidates"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "provider_key", "provider_contact_reference"),
+        Index("ix_contact_tenant_relationship", "organization_id", "organization_company_id"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    organization_company_id: Mapped[str] = mapped_column(ForeignKey("organization_companies.id"))
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), index=True)
+    qualification_id: Mapped[str] = mapped_column(ForeignKey("lead_qualifications.id"), index=True)
+    provider_key: Mapped[str] = mapped_column(String(100))
+    provider_contact_reference: Mapped[str | None] = mapped_column(String(255))
+    first_name: Mapped[str | None] = mapped_column(String(100))
+    last_name: Mapped[str | None] = mapped_column(String(100))
+    full_name: Mapped[str | None] = mapped_column(String(220))
+    job_title: Mapped[str | None] = mapped_column(String(200))
+    department: Mapped[str | None] = mapped_column(String(100))
+    seniority: Mapped[str | None] = mapped_column(String(100))
+    normalized_buyer_role: Mapped[str] = mapped_column(String(200))
+    buyer_role_match: Mapped[BuyerRoleMatch] = mapped_column(
+        Enum(BuyerRoleMatch, native_enum=False)
+    )
+    buyer_role_match_reason: Mapped[str] = mapped_column(String(255))
+    confidence: Mapped[int | None] = mapped_column(Integer)
+    discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    classification: Mapped[DataClassification] = mapped_column(
+        Enum(DataClassification, native_enum=False)
+    )
+    redistribution_status: Mapped[RedistributionStatus] = mapped_column(
+        Enum(RedistributionStatus, native_enum=False)
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    channels: Mapped[list[ContactEmail]] = relationship(cascade="all, delete-orphan")
+
+
+class ContactEmail(Base):
+    __tablename__ = "contact_emails"
+    __table_args__ = (UniqueConstraint("contact_id", "email"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    contact_id: Mapped[str] = mapped_column(
+        ForeignKey("contact_candidates.id", ondelete="CASCADE"), index=True
+    )
+    email: Mapped[str] = mapped_column(String(320))
+    email_type: Mapped[str] = mapped_column(String(30), default="BUSINESS")
+    source_provider: Mapped[str] = mapped_column(String(100))
+    verification_status: Mapped[EmailVerificationStatus] = mapped_column(
+        Enum(EmailVerificationStatus, native_enum=False), default=EmailVerificationStatus.UNKNOWN
+    )
+    verification_score: Mapped[int | None] = mapped_column(Integer)
+    found_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    classification: Mapped[DataClassification] = mapped_column(
+        Enum(DataClassification, native_enum=False)
+    )
+    redistribution_status: Mapped[RedistributionStatus] = mapped_column(
+        Enum(RedistributionStatus, native_enum=False)
+    )
 
 
 class CompanyFact(Base):
@@ -288,10 +552,16 @@ class HumanOverride(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
     company_fact_id: Mapped[str] = mapped_column(ForeignKey("company_facts.id"))
+    fact_key: Mapped[str] = mapped_column(String(150), index=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    action: Mapped[ReviewAction] = mapped_column(
+        Enum(ReviewAction, native_enum=False, validate_strings=True, create_constraint=True)
+    )
     replacement_value: Mapped[Any] = mapped_column(JSON)
     reason: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
 
 
 class AuditLog(Base):

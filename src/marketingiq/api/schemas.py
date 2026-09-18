@@ -1,8 +1,16 @@
 from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from marketingiq.domain.models import MembershipRole, ProductStatus
+from marketingiq.domain.models import (
+    DataClassification,
+    MembershipRole,
+    ProductStatus,
+    RedistributionStatus,
+    ResearchMode,
+    ReviewAction,
+)
 
 
 class Schema(BaseModel):
@@ -34,6 +42,8 @@ class MeResponse(Schema):
 class Criterion(Schema):
     kind: str = Field(min_length=1, max_length=40)
     value: str = Field(min_length=1, max_length=2000)
+    weight: int = Field(default=3, ge=1, le=100)
+    required: bool = False
 
 
 class ProductWrite(Schema):
@@ -44,6 +54,8 @@ class ProductWrite(Schema):
     employee_min: int | None = Field(default=None, ge=0)
     employee_max: int | None = Field(default=None, ge=0)
     criteria: list[Criterion] = Field(default_factory=list, max_length=100)
+    primary_buyer_roles: list[str] = Field(default_factory=list, max_length=20)
+    secondary_buyer_roles: list[str] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
     def validate_employee_range(self):
@@ -88,8 +100,16 @@ class ICPResponse(ICPWrite):
 
 
 class CompanyAttach(Schema):
-    domain: str = Field(pattern=r"^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$", max_length=253)
+    domain: str = Field(min_length=1, max_length=2048)
     canonical_name: str = Field(min_length=1, max_length=255)
+    website_url: str | None = None
+    country_code: str | None = None
+    industry: str | None = None
+    employee_min: int | None = Field(default=None, ge=0)
+    employee_max: int | None = Field(default=None, ge=0)
+    description: str | None = None
+    lifecycle_status: str | None = None
+    private_notes: str | None = None
 
 
 class CompanyRelationshipUpdate(Schema):
@@ -106,3 +126,80 @@ class CompanyResponse(CompanyRelationshipUpdate):
     id: str
     organization_id: str
     company: CompanyIdentity
+
+
+class EvidenceWrite(Schema):
+    data_source_id: str | None = None
+    reference_url: str | None = None
+    reference_text: str | None = None
+    retrieved_at: datetime | None = None
+    last_verified_at: datetime | None = None
+
+
+class CompanyFactWrite(Schema):
+    fact_key: str = Field(min_length=1, max_length=100)
+    value: Any
+    classification: DataClassification
+    redistribution_status: RedistributionStatus | None = None
+    confidence: int = Field(ge=0, le=100)
+    observed_at: datetime | None = None
+    valid_until: datetime | None = None
+    model_version: str | None = None
+    research_run_id: str | None = None
+    evidence: list[EvidenceWrite] = Field(default_factory=list)
+
+
+class DataSourceWrite(Schema):
+    provider_key: str
+    display_name: str
+    external_reference: str | None = None
+
+
+class CsvImport(Schema):
+    content: str
+
+
+class ResearchRequest(Schema):
+    mode: ResearchMode = ResearchMode.PUBLIC_ONLY
+    providers: list[str] = Field(default_factory=list, max_length=10)
+    force_refresh: bool = False
+
+
+class FitAssessmentRequest(Schema):
+    product_id: str
+    icp_id: str
+
+
+class QualificationRequest(Schema):
+    fit_assessment_id: str
+
+
+class ContactDiscoveryRequest(Schema):
+    qualification_id: str
+    provider: str = Field(default="HUNTER", pattern=r"^[A-Z0-9_]+$", max_length=50)
+    max_results: int = Field(default=10, ge=1, le=25)
+    force_refresh: bool = False
+
+
+class ContactProviderRequest(Schema):
+    provider: str = Field(default="HUNTER", pattern=r"^[A-Z0-9_]+$", max_length=50)
+    force_refresh: bool = False
+
+
+class VerifyEmailRequest(ContactProviderRequest):
+    email: str | None = Field(
+        default=None, min_length=3, max_length=320, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+    )
+
+
+class EvaluateAllProductsRequest(Schema):
+    product_id: str | None = None
+
+
+class IntelligenceReview(Schema):
+    action: ReviewAction | Literal["REVOKE"]
+    selected_fact_id: str | None = None
+    value: Any = None
+    confidence: int = Field(default=100, ge=0, le=100)
+    note: str = Field(default="", max_length=10000)
+    evidence_url: str | None = None

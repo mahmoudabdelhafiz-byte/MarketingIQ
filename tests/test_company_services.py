@@ -11,6 +11,7 @@ from marketingiq.application.companies import (
     FactInput,
     normalize_domain,
 )
+from marketingiq.application.errors import AuthorizationError
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.models import (
     AuditLog,
@@ -33,7 +34,8 @@ def make_tenant(session, slug: str, role=MembershipRole.ORGANIZATION_ADMIN):
     session.flush()
     session.add(OrganizationMembership(organization_id=organization.id, user_id=user.id, role=role))
     session.flush()
-    return organization, user, CompanyService(session, TenantContext(organization.id, user.id))
+    context = TenantContext(organization.id, user.id, role)
+    return organization, user, CompanyService(session, context)
 
 
 @pytest.mark.parametrize(
@@ -89,11 +91,11 @@ def test_two_tenants_reuse_company_but_private_relationships_are_isolated(sessio
 def test_read_only_cannot_write_and_marketing_user_can_attach_but_not_import(session):
     _, _, reader = make_tenant(session, "reader", MembershipRole.READ_ONLY)
     _, _, marketer = make_tenant(session, "marketer", MembershipRole.MARKETING_USER)
-    with pytest.raises(PermissionError):
+    with pytest.raises(AuthorizationError):
         reader.attach_company(domain="reader.test", canonical_name="Reader")
     relationship = marketer.attach_company(domain="marketer.test", canonical_name="Marketer")
     assert relationship.company.canonical_name == "Marketer"
-    with pytest.raises(PermissionError):
+    with pytest.raises(AuthorizationError):
         marketer.preview_csv("company_name,domain\nExample,example.com\n")
 
 

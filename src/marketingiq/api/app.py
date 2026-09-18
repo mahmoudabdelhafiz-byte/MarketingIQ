@@ -1,124 +1,557 @@
-from __future__ import annotations
+import os
+from collections.abc import Generator
+from typing import Any
 
-from datetime import datetime
-from functools import lru_cache
-from typing import Annotated, Any
-
+import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, status
-from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session, sessionmaker
+from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from marketingiq.application.companies import (
-    CompanyService,
-    EvidenceInput,
-    FactInput,
-    ImportReport,
+from marketingiq.api.campaign_routes import register_campaign_routes
+from marketingiq.api.schemas import (
+    Activation,
+    CompanyAttach,
+    CompanyFactWrite,
+    CompanyRelationshipUpdate,
+    ContactDiscoveryRequest,
+    ContactProviderRequest,
+    CsvImport,
+    DataSourceWrite,
+    EvaluateAllProductsRequest,
+    FitAssessmentRequest,
+    ICPResponse,
+    ICPWrite,
+    IntelligenceReview,
+    LoginRequest,
+    MeResponse,
+    ProductResponse,
+    ProductWrite,
+    QualificationRequest,
+    ResearchRequest,
+    TokenResponse,
+    VerifyEmailRequest,
 )
+from marketingiq.application.auth import authenticate, create_access_token, decode_access_token
+from marketingiq.application.catalog import CatalogService
+from marketingiq.application.companies import CompanyService, EvidenceInput, FactInput, ImportReport
+from marketingiq.application.contacts import ContactDiscoveryService
+from marketingiq.application.errors import AuthorizationError, ConflictError, NotFoundError
+from marketingiq.application.fit import FitAssessmentService
+from marketingiq.application.fit_freshness import FitAssessmentFreshnessService
+from marketingiq.application.intelligence import IntelligenceService, ReviewRequest
+from marketingiq.application.qualification import LeadQualificationService
+from marketingiq.application.research import CompanyResearchService, ProviderRegistry
 from marketingiq.application.tenant import TenantContext
-from marketingiq.domain.models import DataClassification, RedistributionStatus
+from marketingiq.domain.models import OrganizationMembership, ReviewAction, User
 from marketingiq.infrastructure.database import create_database_engine, create_session_factory
+from marketingiq.infrastructure.providers import HunterProvider, PublicWebProvider
+from marketingiq.infrastructure.schema_status import inspect_database_schema
 
-app = FastAPI(title="MarketingIQ internal API", version="1.0")
+bearer = HTTPBearer(auto_error=False)
+
+_ALLOWED_APP_ENVIRONMENTS = {"development", "test", "staging", "production"}
+_EXAMPLE_AUTH_SECRET = "replace-with-a-random-development-value"
 
 
-@lru_cache
-def _sessions() -> sessionmaker[Session]:
-    return create_session_factory(create_database_engine())
+def _application_environment() -> str:
+    value = os.environ.get("APP_ENV", "development").strip().lower()
+    if value not in _ALLOWED_APP_ENVIRONMENTS:
+        allowed = ", ".join(sorted(_ALLOWED_APP_ENVIRONMENTS))
+        raise RuntimeError(f"APP_ENV must be one of: {allowed}")
+    return value
 
 
-def get_session():
-    with _sessions() as session:
+def _database_is_ready(engine) -> bool:
+    return inspect_database_schema(engine).ready
+
+
+def create_app(database_url: str | None = None, auth_secret: str | None = None) -> FastAPI:
+    environment = _application_environment()
+    secret = auth_secret or os.environ.get("AUTH_SECRET")
+    if not secret or len(secret) < 32:
+        raise RuntimeError("AUTH_SECRET must contain at least 32 characters")
+    if secret == _EXAMPLE_AUTH_SECRET:
+        raise RuntimeError("AUTH_SECRET must not use the example development value")
+    engine = create_database_engine(database_url)
+    sessions = create_session_factory(engine)
+    production = environment == "production"
+    app = FastAPI(
+        title="MarketingIQ internal API",
+        version="1.0.0",
+        docs_url=None if production else "/docs",
+        redoc_url=None if production else "/redoc",
+        openapi_url=None if production else "/openapi.json",
+    )
+    app.state.environment = environment
+    app.state.provider_registry = ProviderRegistry([PublicWebProvider(), HunterProvider()])
+
+    if production:
+        @app.middleware("http")
+        async def add_production_security_headers(request, call_next):
+            response = await call_next(request)
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Referrer-Policy"] = "no-referrer"
+            response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+            return response
+
+    @app.get("/health/live", include_in_schema=False)
+    def health_live():
+        return {"status": "ok"}
+
+    @app.get("/health/ready", include_in_schema=False)
+    def health_ready():
+        if not _database_is_ready(engine):
+            return JSONResponse({"status": "unavailable"}, status_code=503)
+        return {"status": "ok"}
+
+    def session() -> Generator[Session, None, None]:
+        with sessions() as value:
+            try:
+                yield value
+                value.commit()
+            except Exception:
+                value.rollback()
+                raise
+
+    def current_user(
+        credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+        db: Session = Depends(session),
+    ) -> User:
+        if credentials is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Authentication required")
         try:
-            yield session
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
+            user_id = decode_access_token(credentials.credentials, secret)
+        except jwt.PyJWTError:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token") from None
+        user = db.get(User, user_id)
+        if user is None or not user.is_active:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
+        return user
 
+    def tenant(
+        org_id: str,
+        user: User = Depends(current_user),
+        db: Session = Depends(session),
+        x_organization_id: str | None = Header(default=None),
+    ) -> TenantContext:
+        if x_organization_id is not None and x_organization_id != org_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Organization context mismatch")
+        membership = db.scalar(
+            select(OrganizationMembership).where(
+                OrganizationMembership.organization_id == org_id,
+                OrganizationMembership.user_id == user.id,
+            )
+        )
+        if membership is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
+        return TenantContext(org_id, user.id, membership.role)
 
-def get_service(
-    organization_id: str,
-    x_user_id: Annotated[str, Header()],
-    session: Annotated[Session, Depends(get_session)],
-) -> CompanyService:
-    return CompanyService(session, TenantContext(organization_id, x_user_id))
+    def service(
+        context: TenantContext = Depends(tenant), db: Session = Depends(session)
+    ) -> CatalogService:
+        return CatalogService(db, context)
 
+    def company_service(
+        context: TenantContext = Depends(tenant), db: Session = Depends(session)
+    ) -> CompanyService:
+        return CompanyService(db, context)
 
-Service = Annotated[CompanyService, Depends(get_service)]
+    def research_service(
+        context: TenantContext = Depends(tenant), db: Session = Depends(session)
+    ) -> CompanyResearchService:
+        return CompanyResearchService(db, context, app.state.provider_registry)
 
+    def intelligence_service(
+        context: TenantContext = Depends(tenant), db: Session = Depends(session)
+    ) -> IntelligenceService:
+        return IntelligenceService(db, context)
 
-class CompanyCreate(BaseModel):
-    domain: str
-    canonical_name: str = Field(min_length=1, max_length=255)
-    website_url: str | None = None
-    country_code: str | None = None
-    industry: str | None = None
-    employee_min: int | None = Field(default=None, ge=0)
-    employee_max: int | None = Field(default=None, ge=0)
-    description: str | None = None
-    lifecycle_status: str | None = None
-    private_notes: str | None = None
+    def fit_service(
+        context: TenantContext = Depends(tenant), db: Session = Depends(session)
+    ) -> FitAssessmentService:
+        return FitAssessmentService(db, context)
 
+    def fit_freshness_service(
+        context: TenantContext = Depends(tenant), db: Session = Depends(session)
+    ) -> FitAssessmentFreshnessService:
+        return FitAssessmentFreshnessService(db, context)
 
-class RelationshipPatch(BaseModel):
-    lifecycle_status: str | None = None
-    private_notes: str | None = None
+    def qualification_service(
+        context: TenantContext = Depends(tenant), db: Session = Depends(session)
+    ) -> LeadQualificationService:
+        return LeadQualificationService(db, context)
 
+    def contact_service(context: TenantContext = Depends(tenant), db: Session = Depends(session)):
+        return ContactDiscoveryService(db, context, app.state.provider_registry)
 
-class EvidenceCreate(BaseModel):
-    data_source_id: str | None = None
-    reference_url: str | None = None
-    reference_text: str | None = None
-    retrieved_at: datetime | None = None
-    last_verified_at: datetime | None = None
+    @app.exception_handler(NotFoundError)
+    async def not_found(_request, error):
+        return JSONResponse({"detail": str(error)}, status_code=404)
 
+    @app.exception_handler(AuthorizationError)
+    async def forbidden(_request, error):
+        return JSONResponse({"detail": str(error)}, status_code=403)
 
-class FactCreate(BaseModel):
-    fact_key: str
-    value: Any
-    classification: DataClassification
-    redistribution_status: RedistributionStatus | None = None
-    confidence: int = Field(ge=0, le=100)
-    observed_at: datetime | None = None
-    valid_until: datetime | None = None
-    model_version: str | None = None
-    research_run_id: str | None = None
-    evidence: list[EvidenceCreate] = Field(default_factory=list)
+    @app.exception_handler(ConflictError)
+    async def conflict(_request, error):
+        return JSONResponse({"detail": str(error)}, status_code=409)
 
+    @app.exception_handler(LookupError)
+    async def company_not_found(_request, error):
+        return JSONResponse({"detail": str(error)}, status_code=404)
 
-class SourceCreate(BaseModel):
-    provider_key: str
-    display_name: str
-    external_reference: str | None = None
+    @app.exception_handler(ValueError)
+    async def invalid_company_input(_request, error):
+        return JSONResponse({"detail": str(error)}, status_code=422)
 
+    @app.post("/api/v1/auth/login", response_model=TokenResponse)
+    def login(body: LoginRequest, db: Session = Depends(session)):
+        user = authenticate(db, body.email, body.password)
+        if user is None:
+            raise HTTPException(401, "Invalid email or password")
+        return TokenResponse(access_token=create_access_token(user, secret))
 
-class CsvInput(BaseModel):
-    content: str
+    @app.get("/api/v1/me", response_model=MeResponse)
+    def me(user: User = Depends(current_user), db: Session = Depends(session)):
+        memberships = db.scalars(
+            select(OrganizationMembership).where(OrganizationMembership.user_id == user.id)
+        ).all()
+        return MeResponse(
+            id=user.id,
+            email=user.email,
+            is_super_admin=user.is_super_admin,
+            memberships=memberships,
+        )
 
+    prefix = "/api/v1/organizations/{org_id}"
 
-def _call(callback):
-    try:
-        return callback()
-    except PermissionError as error:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
-    except LookupError as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-    except ValueError as error:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error)) from error
+    @app.get(prefix + "/products", response_model=list[ProductResponse])
+    def products(svc: CatalogService = Depends(service)):
+        return svc.list_products()
+
+    @app.post(prefix + "/products", response_model=ProductResponse, status_code=201)
+    def create_product(body: ProductWrite, svc: CatalogService = Depends(service)):
+        return svc.create_product(**body.model_dump())
+
+    @app.get(prefix + "/products/{product_id}", response_model=ProductResponse)
+    def product(product_id: str, svc: CatalogService = Depends(service)):
+        return svc.get_product(product_id)
+
+    @app.put(prefix + "/products/{product_id}", response_model=ProductResponse)
+    def update_product(product_id: str, body: ProductWrite, svc: CatalogService = Depends(service)):
+        return svc.update_product(product_id, **body.model_dump())
+
+    @app.patch(prefix + "/products/{product_id}/activation", response_model=ProductResponse)
+    def activate_product(product_id: str, body: Activation, svc: CatalogService = Depends(service)):
+        return svc.set_product_active(product_id, body.active)
+
+    @app.get(prefix + "/products/{product_id}/icps", response_model=list[ICPResponse])
+    def icps(product_id: str, svc: CatalogService = Depends(service)):
+        return svc.list_icps(product_id)
+
+    @app.post(prefix + "/products/{product_id}/icps", response_model=ICPResponse, status_code=201)
+    def create_icp(product_id: str, body: ICPWrite, svc: CatalogService = Depends(service)):
+        return svc.create_icp(product_id, **body.model_dump())
+
+    @app.get(prefix + "/icps/{icp_id}", response_model=ICPResponse)
+    def icp(icp_id: str, svc: CatalogService = Depends(service)):
+        return svc.get_icp(icp_id)
+
+    @app.put(prefix + "/icps/{icp_id}", response_model=ICPResponse)
+    def update_icp(icp_id: str, body: ICPWrite, svc: CatalogService = Depends(service)):
+        return svc.update_icp(icp_id, **body.model_dump())
+
+    @app.patch(prefix + "/icps/{icp_id}/activation", response_model=ICPResponse)
+    def activate_icp(icp_id: str, body: Activation, svc: CatalogService = Depends(service)):
+        return svc.set_icp_active(icp_id, body.active)
+
+    @app.get(prefix + "/companies")
+    def companies(svc: CompanyService = Depends(company_service)):
+        return [_company_output(item) for item in svc.list_companies()]
+
+    @app.post(prefix + "/companies", status_code=201)
+    def attach_company(body: CompanyAttach, svc: CompanyService = Depends(company_service)):
+        values = body.model_dump()
+        shared = {
+            key: values.pop(key)
+            for key in (
+                "website_url",
+                "country_code",
+                "industry",
+                "employee_min",
+                "employee_max",
+                "description",
+            )
+        }
+        return _company_output(svc.attach_company(**values, shared_values=shared))
+
+    @app.get(prefix + "/companies/{relationship_id}")
+    def company(relationship_id: str, svc: CompanyService = Depends(company_service)):
+        return _company_output(svc.get_company(relationship_id))
+
+    @app.patch(prefix + "/companies/{relationship_id}")
+    def update_company(
+        relationship_id: str,
+        body: CompanyRelationshipUpdate,
+        svc: CompanyService = Depends(company_service),
+    ):
+        return _company_output(svc.update_relationship(relationship_id, **body.model_dump()))
+
+    @app.get(prefix + "/companies/{relationship_id}/facts")
+    def facts(relationship_id: str, svc: CompanyService = Depends(company_service)):
+        return [_fact_output(item) for item in svc.list_facts(relationship_id)]
+
+    @app.get(prefix + "/companies/{relationship_id}/intelligence")
+    def intelligence(
+        relationship_id: str, svc: IntelligenceService = Depends(intelligence_service)
+    ):
+        return svc.list(relationship_id)
+
+    @app.get(prefix + "/companies/{relationship_id}/intelligence/{fact_key}")
+    def intelligence_fact(
+        relationship_id: str,
+        fact_key: str,
+        svc: IntelligenceService = Depends(intelligence_service),
+    ):
+        return svc.get(relationship_id, fact_key)
+
+    @app.post(prefix + "/companies/{relationship_id}/intelligence/{fact_key}/review")
+    def review_intelligence_fact(
+        relationship_id: str,
+        fact_key: str,
+        body: IntelligenceReview,
+        svc: IntelligenceService = Depends(intelligence_service),
+    ):
+        if body.action == "REVOKE":
+            return svc.revoke(relationship_id, fact_key, body.note)
+        try:
+            action = ReviewAction(body.action)
+        except ValueError:
+            raise ValueError("unsupported review action") from None
+        values = body.model_dump(exclude={"action"})
+        return svc.review(relationship_id, fact_key, ReviewRequest(action=action, **values))
+
+    @app.get(prefix + "/companies/{relationship_id}/fact-history/{fact_key}")
+    def fact_history(
+        relationship_id: str,
+        fact_key: str,
+        svc: IntelligenceService = Depends(intelligence_service),
+    ):
+        return [_fact_output(item) for item in svc.history(relationship_id, fact_key)]
+
+    fit_prefix = prefix + "/companies/{relationship_id}/fit-assessments"
+
+    @app.post(fit_prefix, status_code=201)
+    def assess_fit(
+        relationship_id: str,
+        body: FitAssessmentRequest,
+        svc: FitAssessmentService = Depends(fit_service),
+    ):
+        return _assessment_output(svc.evaluate(relationship_id, body.product_id, body.icp_id))
+
+    @app.get(fit_prefix)
+    def fit_history(relationship_id: str, svc: FitAssessmentService = Depends(fit_service)):
+        return [_assessment_output(item) for item in svc.list(relationship_id)]
+
+    @app.post(fit_prefix + "/evaluate-all-products", status_code=201)
+    def assess_all_products(
+        relationship_id: str,
+        body: EvaluateAllProductsRequest,
+        svc: FitAssessmentService = Depends(fit_service),
+    ):
+        return [
+            _assessment_output(item) for item in svc.evaluate_all(relationship_id, body.product_id)
+        ]
+
+    @app.get(fit_prefix + "/{assessment_id}")
+    def fit_assessment(
+        relationship_id: str,
+        assessment_id: str,
+        svc: FitAssessmentService = Depends(fit_service),
+    ):
+        return _assessment_output(svc.get(relationship_id, assessment_id))
+
+    @app.get(fit_prefix + "/{assessment_id}/freshness")
+    def fit_assessment_freshness(
+        relationship_id: str,
+        assessment_id: str,
+        svc: FitAssessmentFreshnessService = Depends(fit_freshness_service),
+    ):
+        return svc.get(relationship_id, assessment_id)
+
+    @app.post(fit_prefix + "/{assessment_id}/reevaluate", status_code=201)
+    def reevaluate_fit_assessment(
+        relationship_id: str,
+        assessment_id: str,
+        svc: FitAssessmentService = Depends(fit_service),
+        freshness: FitAssessmentFreshnessService = Depends(fit_freshness_service),
+    ):
+        old = svc.get(relationship_id, assessment_id)
+        current = freshness.get(relationship_id, assessment_id)
+        return _assessment_output(
+            svc.evaluate(relationship_id, old.product_id, current["current_icp_id"])
+        )
+
+    qualification_prefix = prefix + "/companies/{relationship_id}/qualifications"
+
+    @app.post(qualification_prefix, status_code=201)
+    def qualify_lead(
+        relationship_id: str,
+        body: QualificationRequest,
+        svc: LeadQualificationService = Depends(qualification_service),
+    ):
+        return _qualification_output(svc.execute(relationship_id, body.fit_assessment_id))
+
+    @app.get(qualification_prefix)
+    def qualification_history(
+        relationship_id: str,
+        svc: LeadQualificationService = Depends(qualification_service),
+    ):
+        return [_qualification_output(item) for item in svc.list(relationship_id)]
+
+    @app.get(qualification_prefix + "/{qualification_id}")
+    def qualification(
+        relationship_id: str,
+        qualification_id: str,
+        svc: LeadQualificationService = Depends(qualification_service),
+    ):
+        return _qualification_output(svc.get(relationship_id, qualification_id))
+
+    @app.post(qualification_prefix + "/{qualification_id}/reevaluate", status_code=201)
+    def reevaluate_qualification(
+        relationship_id: str,
+        qualification_id: str,
+        svc: LeadQualificationService = Depends(qualification_service),
+    ):
+        return _qualification_output(svc.reevaluate(relationship_id, qualification_id))
+
+    contact_prefix = prefix + "/companies/{relationship_id}/contacts"
+
+    @app.post(contact_prefix + "/discover", status_code=201)
+    def discover_contacts(
+        relationship_id: str,
+        body: ContactDiscoveryRequest,
+        svc: ContactDiscoveryService = Depends(contact_service),
+    ):
+        return [
+            _contact_output(x)
+            for x in svc.discover(
+                relationship_id,
+                body.qualification_id,
+                body.provider,
+                body.max_results,
+                body.force_refresh,
+            )
+        ]
+
+    @app.get(contact_prefix)
+    def contacts(relationship_id: str, svc: ContactDiscoveryService = Depends(contact_service)):
+        return [_contact_output(x) for x in svc.list(relationship_id)]
+
+    @app.get(contact_prefix + "/{contact_id}")
+    def contact(
+        relationship_id: str,
+        contact_id: str,
+        svc: ContactDiscoveryService = Depends(contact_service),
+    ):
+        return _contact_output(svc.get(relationship_id, contact_id))
+
+    @app.post(contact_prefix + "/{contact_id}/find-email")
+    def find_contact_email(
+        relationship_id: str,
+        contact_id: str,
+        body: ContactProviderRequest,
+        svc: ContactDiscoveryService = Depends(contact_service),
+    ):
+        return _contact_output(
+            svc.find_email(relationship_id, contact_id, body.provider, body.force_refresh)
+        )
+
+    @app.post(contact_prefix + "/{contact_id}/verify-email")
+    def verify_contact_email(
+        relationship_id: str,
+        contact_id: str,
+        body: VerifyEmailRequest,
+        svc: ContactDiscoveryService = Depends(contact_service),
+    ):
+        return _contact_output(
+            svc.verify_email(
+                relationship_id, contact_id, body.email, body.provider, body.force_refresh
+            )
+        )
+
+    @app.post(prefix + "/companies/{relationship_id}/facts", status_code=201)
+    def add_fact(
+        relationship_id: str,
+        body: CompanyFactWrite,
+        svc: CompanyService = Depends(company_service),
+    ):
+        payload = body.model_dump()
+        payload["evidence"] = [EvidenceInput(**item) for item in payload["evidence"]]
+        return _fact_output(svc.add_fact(relationship_id, FactInput(**payload)))
+
+    @app.get(prefix + "/data-sources")
+    def sources(svc: CompanyService = Depends(company_service)):
+        return [_source_output(item) for item in svc.list_sources()]
+
+    @app.post(prefix + "/data-sources", status_code=201)
+    def create_source(body: DataSourceWrite, svc: CompanyService = Depends(company_service)):
+        return _source_output(svc.get_or_create_source(**body.model_dump()))
+
+    @app.post(prefix + "/company-imports/preview")
+    def preview_import(body: CsvImport, svc: CompanyService = Depends(company_service)):
+        return _report_output(svc.preview_csv(body.content))
+
+    @app.post(prefix + "/company-imports", status_code=201)
+    def execute_import(body: CsvImport, svc: CompanyService = Depends(company_service)):
+        return _report_output(svc.import_csv(body.content))
+
+    @app.post(prefix + "/companies/{relationship_id}/research", status_code=201)
+    def research_company(
+        relationship_id: str,
+        body: ResearchRequest,
+        svc: CompanyResearchService = Depends(research_service),
+    ):
+        return _run_output(svc.run(relationship_id, **body.model_dump()))
+
+    @app.get(prefix + "/companies/{relationship_id}/research-runs")
+    def research_runs(
+        relationship_id: str, svc: CompanyResearchService = Depends(research_service)
+    ):
+        return [_run_output(run) for run in svc.list_runs(relationship_id)]
+
+    @app.get(prefix + "/provider-usage")
+    def provider_usage(svc: CompanyResearchService = Depends(research_service)):
+        return svc.usage_report()
+
+    @app.get(prefix + "/providers/status")
+    def provider_status(
+        context: TenantContext = Depends(tenant),
+    ):
+        # Resolving tenant first intentionally protects even configuration metadata.
+        return app.state.provider_registry.status()
+
+    register_campaign_routes(app, prefix, tenant, session)
+    return app
 
 
 def _company_output(item) -> dict[str, Any]:
     domain = next(
-        (
-            identifier.normalized_value
-            for identifier in item.company.identifiers
-            if identifier.kind == "DOMAIN"
-        ),
+        (value.normalized_value for value in item.company.identifiers if value.kind == "DOMAIN"),
         None,
     )
     return {
         "id": item.id,
+        "organization_id": item.organization_id,
         "company_id": item.company_id,
+        "company": {
+            "id": item.company.id,
+            "canonical_name": item.company.canonical_name,
+        },
         "domain": domain,
         "canonical_name": item.company.canonical_name,
         "website_url": item.company.website_url,
@@ -160,103 +593,14 @@ def _fact_output(item) -> dict[str, Any]:
     }
 
 
-@app.get("/api/v1/organizations/{organization_id}/companies")
-def list_companies(service: Service):
-    return _call(lambda: [_company_output(item) for item in service.list_companies()])
-
-
-@app.post("/api/v1/organizations/{organization_id}/companies", status_code=201)
-def create_company(body: CompanyCreate, service: Service):
-    def execute():
-        shared = body.model_dump(
-            exclude={"domain", "canonical_name", "lifecycle_status", "private_notes"}
-        )
-        item = service.attach_company(
-            domain=body.domain,
-            canonical_name=body.canonical_name,
-            lifecycle_status=body.lifecycle_status,
-            private_notes=body.private_notes,
-            shared_values=shared,
-        )
-        return _company_output(item)
-
-    return _call(execute)
-
-
-@app.get("/api/v1/organizations/{organization_id}/companies/{relationship_id}")
-def get_company(relationship_id: str, service: Service):
-    return _call(lambda: _company_output(service.get_company(relationship_id)))
-
-
-@app.patch("/api/v1/organizations/{organization_id}/companies/{relationship_id}")
-def patch_company(relationship_id: str, body: RelationshipPatch, service: Service):
-    return _call(
-        lambda: _company_output(
-            service.update_relationship(
-                relationship_id,
-                lifecycle_status=body.lifecycle_status,
-                private_notes=body.private_notes,
-            )
-        )
-    )
-
-
-@app.get("/api/v1/organizations/{organization_id}/companies/{relationship_id}/facts")
-def list_facts(relationship_id: str, service: Service):
-    return _call(lambda: [_fact_output(item) for item in service.list_facts(relationship_id)])
-
-
-@app.post(
-    "/api/v1/organizations/{organization_id}/companies/{relationship_id}/facts",
-    status_code=201,
-)
-def add_fact(relationship_id: str, body: FactCreate, service: Service):
-    payload = body.model_dump()
-    payload["evidence"] = [EvidenceInput(**item) for item in payload["evidence"]]
-    return _call(lambda: _fact_output(service.add_fact(relationship_id, FactInput(**payload))))
-
-
-@app.get("/api/v1/organizations/{organization_id}/data-sources")
-def list_sources(service: Service):
-    return _call(
-        lambda: [
-            {
-                "id": source.id,
-                "provider_key": source.provider_key,
-                "display_name": source.display_name,
-                "external_reference": source.external_reference,
-                "is_active": source.is_active,
-            }
-            for source in service.list_sources()
-        ]
-    )
-
-
-@app.post("/api/v1/organizations/{organization_id}/data-sources", status_code=201)
-def create_source(body: SourceCreate, service: Service):
-    def execute():
-        source = service.get_or_create_source(
-            body.provider_key, body.display_name, body.external_reference
-        )
-        return {
-            "id": source.id,
-            "provider_key": source.provider_key,
-            "display_name": source.display_name,
-            "external_reference": source.external_reference,
-            "is_active": source.is_active,
-        }
-
-    return _call(execute)
-
-
-@app.post("/api/v1/organizations/{organization_id}/company-imports/preview")
-def preview_import(body: CsvInput, service: Service):
-    return _call(lambda: _report_output(service.preview_csv(body.content)))
-
-
-@app.post("/api/v1/organizations/{organization_id}/company-imports", status_code=201)
-def execute_import(body: CsvInput, service: Service):
-    return _call(lambda: _report_output(service.import_csv(body.content)))
+def _source_output(source) -> dict[str, Any]:
+    return {
+        "id": source.id,
+        "provider_key": source.provider_key,
+        "display_name": source.display_name,
+        "external_reference": source.external_reference,
+        "is_active": source.is_active,
+    }
 
 
 def _report_output(report: ImportReport) -> dict[str, Any]:
@@ -265,5 +609,113 @@ def _report_output(report: ImportReport) -> dict[str, Any]:
         "rows": [
             {key: value for key, value in row.__dict__.items() if key != "values"}
             for row in report.rows
+        ],
+    }
+
+
+def _run_output(run) -> dict[str, Any]:
+    return {
+        "id": run.id,
+        "organization_id": run.organization_id,
+        "company_id": run.company_id,
+        "initiated_by_user_id": run.initiated_by_user_id,
+        "mode": run.mode,
+        "status": run.status,
+        "started_at": run.started_at,
+        "completed_at": run.completed_at,
+        "providers_attempted": run.providers_attempted,
+        "providers_succeeded": run.providers_succeeded,
+        "error_summary": run.error_summary,
+        "workflow_version": run.workflow_version,
+    }
+
+
+def _assessment_output(item) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "organization_id": item.organization_id,
+        "company_id": item.company_id,
+        "organization_company_id": item.organization_company_id,
+        "product_id": item.product_id,
+        "icp_id": item.icp_id,
+        "icp_version": item.icp_version,
+        "fit_score": item.score,
+        "evidence_coverage": item.evidence_coverage,
+        "confidence": item.confidence,
+        "grade": item.grade,
+        "status": item.status,
+        "evaluated_at": item.evaluated_at,
+        "workflow_version": item.workflow_version,
+        "evidence_snapshot": item.evidence_snapshot,
+        "explanation": item.explanation,
+        "classification": item.classification,
+        "created_by_user_id": item.created_by_user_id,
+    }
+
+
+def _qualification_output(item) -> dict[str, Any]:
+    return {
+        "qualification_id": item.id,
+        "organization_id": item.organization_id,
+        "company_id": item.company_id,
+        "organization_company_id": item.organization_company_id,
+        "product_id": item.product_id,
+        "fit_assessment_id": item.fit_assessment_id,
+        **item.reasons.get("fit_summary", {}),
+        "qualification_score": item.qualification_score,
+        "qualification_grade": item.qualification_grade,
+        "status": item.status,
+        "confidence": item.confidence,
+        "recommended_buyer_role": item.recommended_buyer_role,
+        "buyer_role_confidence": item.buyer_role_confidence,
+        "alternative_buyer_roles": item.alternative_buyer_roles,
+        "positive_reasons": item.reasons.get("positive_reasons", []),
+        "negative_reasons": item.reasons.get("negative_reasons", []),
+        "buyer_role_reason_codes": item.reasons.get("buyer_role_reason_codes", []),
+        "research_gaps": item.research_gaps,
+        "component_scores": item.component_scores,
+        "workflow_version": item.workflow_version,
+        "qualified_at": item.qualified_at,
+        "classification": item.classification,
+        "created_by_user_id": item.created_by_user_id,
+    }
+
+
+def _contact_output(item) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "organization_id": item.organization_id,
+        "organization_company_id": item.organization_company_id,
+        "company_id": item.company_id,
+        "qualification_id": item.qualification_id,
+        "provider_key": item.provider_key,
+        "first_name": item.first_name,
+        "last_name": item.last_name,
+        "full_name": item.full_name,
+        "job_title": item.job_title,
+        "department": item.department,
+        "seniority": item.seniority,
+        "normalized_buyer_role": item.normalized_buyer_role,
+        "buyer_role_match": item.buyer_role_match,
+        "buyer_role_match_reason": item.buyer_role_match_reason,
+        "confidence": item.confidence,
+        "discovered_at": item.discovered_at,
+        "last_verified_at": item.last_verified_at,
+        "classification": item.classification,
+        "redistribution_status": item.redistribution_status,
+        "emails": [
+            {
+                "id": x.id,
+                "email": x.email,
+                "email_type": x.email_type,
+                "source_provider": x.source_provider,
+                "verification_status": x.verification_status,
+                "verification_score": x.verification_score,
+                "found_at": x.found_at,
+                "verified_at": x.verified_at,
+                "classification": x.classification,
+                "redistribution_status": x.redistribution_status,
+            }
+            for x in item.channels
         ],
     }

@@ -7,13 +7,17 @@ MarketingIQ is an API-ready modular monolith:
 - `domain` defines relational entities, controlled vocabularies and provider ports.
 - `application` owns use cases and requires an explicit `TenantContext` for private records.
 - `infrastructure` owns database configuration, seed helpers and later provider adapters.
-- Internal REST handlers and future UI/background workers call application services rather than
-  models or provider SDKs directly. `CompanyService` is the tenant-scoped company, provenance,
-  and synchronous import use-case boundary.
+- Future UI, REST handlers and background workers call application services rather than models
+  or provider SDKs directly.
 
-PostgreSQL is the production system of record. Background work can initially use a database
-outbox/job table and a separate worker process from the same codebase; select a queue only when
-load and delivery semantics are known. A public API is deliberately not implemented yet.
+`CompanyService` is the tenant-scoped boundary for company relationships, facts, evidence, and
+synchronous CSV imports. The authenticated internal API derives its `TenantContext` from the JWT
+actor and organization membership; it never trusts an actor identifier supplied in a header.
+
+MySQL 8 is the production system of record for the initial shared-hosting deployment. Background
+work can initially use a database outbox/job table and a separate worker process from the same
+codebase; select a queue only when load and delivery semantics are known. A public API is
+deliberately not implemented yet.
 
 ## Multi-tenancy and company identity
 
@@ -22,14 +26,14 @@ unique, allowing safe reuse without duplicating identity. `OrganizationCompany` 
 tenant-owned relationship containing lifecycle and private notes. Products, ICPs, memberships,
 overrides, audit events and tenant research are explicitly keyed by `organization_id`.
 
-Application access to tenant-owned data goes through `TenantRepository`, constructed with a
-non-empty tenant context; its reads always add the tenant predicate and writes reject mismatched
+Application access to tenant-owned data goes through tenant-scoped services/repositories built
+with a non-empty tenant context; reads add the tenant predicate and writes reject mismatched
 organizations. Future repositories must follow the same rule, and integration tests must prove
-cross-tenant denial. PostgreSQL row-level security is recommended as defense in depth once the
-request/session transaction lifecycle exists; application scoping remains mandatory.
+cross-tenant denial. MySQL does not provide PostgreSQL-style row-level security, so application
+scoping, RBAC, least-privilege database credentials, auditability and tenant-isolation tests are
+mandatory rather than optional defense in depth.
 
-Global facts have a null `organization_id`. The internal tenant API only creates tenant-owned
-facts; global publication is intentionally unavailable. Customer-provided or tenant-derived private facts
+Global facts have a null `organization_id`. Customer-provided or tenant-derived private facts
 carry an organization and must never be promoted to a global record implicitly. A later,
 audited publication use case may promote eligible derived facts after licensing and privacy
 checks. Global identity fields should contain only conservative, verified identity data;
@@ -72,27 +76,23 @@ or API credential is implemented in Sprint 1.
 - Super Admin is a platform-level `User.is_super_admin` flag, deliberately separate from
   `ORGANIZATION_ADMIN`, `MARKETING_USER` and `READ_ONLY` memberships. Authorization must check
   both tenant membership and action; super-admin access must be audited.
-- HTTP entry points must add schema validation, size limits, generic error responses, output
-  escaping, secure cookies and CSRF protection for cookie-authenticated mutations.
+- HTTP entry points use schema validation and generic error responses. Production responses
+  disable caching and add browser hardening headers; interactive API docs are disabled in production.
+  Secure cookies and CSRF protection remain requirements if cookie-authenticated mutations are added.
 - Identifiers, uniqueness, foreign keys and confidence ranges have database constraints.
 - Secrets come from environment/secret management. Provider payloads and credentials must not
   be logged. Audit logs record actor, tenant, action and target without secret values.
-- Production connections require TLS, least-privilege database roles, encrypted backups and
-  tenant-aware restore/access procedures.
-
-## Internal API
-
-The `/api/v1/organizations/{organization_id}` routes list, attach and update company
-relationships; list and append facts/evidence; manage safe `MANUAL`/`CSV` sources; and preview
-or execute CSV imports. Authorization resolves the actor's membership for the organization on
-every service call. Read-only membership may read; Marketing Users may manually attach companies,
-update relationships, create sources and append facts; only Organization Admins may import.
+- Production MySQL connections require TLS when the hosting provider supports it, least-privilege
+  database users, encrypted backups and tenant-aware restore/access procedures.
 
 ## Initial and future domain
 
 Implemented: Organization, User, OrganizationMembership, Product and normalized criteria, ICP
 and normalized criteria, Company, CompanyIdentifier, OrganizationCompany, CompanyFact, Evidence,
-DataSource, ResearchRun, HumanOverride and AuditLog. The company application service and internal
-HTTP routes now make this slice usable. Contacts, Leads, Campaigns and Opportunities
+DataSource, ResearchRun, HumanOverride and AuditLog. Contacts, Leads, Campaigns and Opportunities
 will be tenant-owned aggregates linked to the global company identity; they are intentionally
 documented rather than prematurely implemented.
+
+The company endpoints normalize and reuse shared domain identities, expose only global and active
+tenant facts, restrict CSV imports to Organization Admins, and audit company, fact, evidence, and
+import mutations. Only `MANUAL` and `CSV` data sources are accepted in Sprint 1.

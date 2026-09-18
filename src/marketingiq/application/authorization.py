@@ -1,24 +1,52 @@
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from enum import StrEnum
 
-from marketingiq.domain.models import MembershipRole, OrganizationMembership
-
-WRITE_ROLES = {MembershipRole.ORGANIZATION_ADMIN, MembershipRole.MARKETING_USER}
-IMPORT_ROLES = {MembershipRole.ORGANIZATION_ADMIN}
+from marketingiq.application.errors import AuthorizationError
+from marketingiq.application.tenant import TenantContext
+from marketingiq.domain.models import MembershipRole
 
 
-def require_membership(
-    session: Session,
-    organization_id: str,
-    user_id: str,
-    allowed_roles: set[MembershipRole] | None = None,
-) -> OrganizationMembership:
-    membership = session.scalar(
-        select(OrganizationMembership).where(
-            OrganizationMembership.organization_id == organization_id,
-            OrganizationMembership.user_id == user_id,
-        )
-    )
-    if membership is None or (allowed_roles is not None and membership.role not in allowed_roles):
-        raise PermissionError("The actor is not authorized for this organization action")
-    return membership
+class Permission(StrEnum):
+    READ = "READ"
+    WRITE_CATALOG = "WRITE_CATALOG"
+    IMPORT_COMPANIES = "IMPORT_COMPANIES"
+    RUN_PUBLIC_RESEARCH = "RUN_PUBLIC_RESEARCH"
+    RUN_EXTERNAL_RESEARCH = "RUN_EXTERNAL_RESEARCH"
+    REVIEW_INTELLIGENCE = "REVIEW_INTELLIGENCE"
+    RUN_FIT_ASSESSMENT = "RUN_FIT_ASSESSMENT"
+    RUN_QUALIFICATION = "RUN_QUALIFICATION"
+    MANAGE_BUYER_ROLES = "MANAGE_BUYER_ROLES"
+    SPEND_PROVIDER_CREDITS = "SPEND_PROVIDER_CREDITS"
+    GENERATE_CAMPAIGN_DRAFT = "GENERATE_CAMPAIGN_DRAFT"
+    REVIEW_CAMPAIGN_DRAFT = "REVIEW_CAMPAIGN_DRAFT"
+    SEND_OUTBOUND_EMAIL = "SEND_OUTBOUND_EMAIL"
+    MANAGE_OUTBOUND_SUPPRESSIONS = "MANAGE_OUTBOUND_SUPPRESSIONS"
+    RECORD_ENGAGEMENT = "RECORD_ENGAGEMENT"
+    MANAGE_PIPELINE = "MANAGE_PIPELINE"
+    MANAGE_AUTOMATION_POLICIES = "MANAGE_AUTOMATION_POLICIES"
+
+
+ROLE_PERMISSIONS = {
+    MembershipRole.ORGANIZATION_ADMIN: frozenset(Permission),
+    MembershipRole.MARKETING_USER: frozenset(
+        {
+            Permission.READ,
+            Permission.WRITE_CATALOG,
+            Permission.RUN_PUBLIC_RESEARCH,
+            Permission.RUN_FIT_ASSESSMENT,
+            Permission.RUN_QUALIFICATION,
+            Permission.SPEND_PROVIDER_CREDITS,
+            Permission.GENERATE_CAMPAIGN_DRAFT,
+            Permission.REVIEW_CAMPAIGN_DRAFT,
+            Permission.SEND_OUTBOUND_EMAIL,
+            Permission.MANAGE_OUTBOUND_SUPPRESSIONS,
+            Permission.RECORD_ENGAGEMENT,
+            Permission.MANAGE_PIPELINE,
+        }
+    ),
+    MembershipRole.READ_ONLY: frozenset({Permission.READ}),
+}
+
+
+def require_permission(tenant: TenantContext, permission: Permission) -> None:
+    if permission not in ROLE_PERMISSIONS[tenant.role]:
+        raise AuthorizationError("Your organization role does not permit this action")
