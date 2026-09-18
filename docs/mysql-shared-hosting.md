@@ -37,6 +37,20 @@ Do not run development seed data automatically in production. A successful GitHu
 check proves the migration chain against a clean MySQL 8 database, but it does not prove that a
 specific hosting database has been migrated.
 
+## Health checks
+
+Expose the application health endpoints through the hosting platform or reverse proxy:
+
+- `GET /health/live` returns HTTP 200 when the API process can serve requests.
+- `GET /health/ready` performs a minimal `SELECT 1` against the configured application database.
+  It returns HTTP 200 when the database is reachable and HTTP 503 otherwise.
+
+These endpoints require no authentication so infrastructure health probes can call them, and they
+return only a coarse status without database URLs, credentials, exception text, provider
+configuration, tenant data, or other operational details. Database readiness does not verify SMTP,
+IMAP, external research providers, cron execution, or whether a production migration was actually
+run; those remain separate deployment checks.
+
 ## Security
 
 Use a dedicated MySQL user with access only to the MarketingIQ database. Enable TLS for the MySQL
