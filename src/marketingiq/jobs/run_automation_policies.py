@@ -6,6 +6,7 @@ import os
 from marketingiq.application.automation_policies import ScheduledAutomationExecutor
 from marketingiq.application.research import ProviderRegistry
 from marketingiq.infrastructure.database import create_database_engine, create_session_factory
+from marketingiq.infrastructure.job_lock import mysql_job_lock
 from marketingiq.infrastructure.providers import HunterProvider, PublicWebProvider
 
 
@@ -16,15 +17,20 @@ def main() -> None:
     except ValueError as error:
         raise RuntimeError("AUTOMATION_CRON_BATCH_SIZE must be an integer") from error
 
-    sessions = create_session_factory(create_database_engine())
+    engine = create_database_engine()
     registry = ProviderRegistry([PublicWebProvider(), HunterProvider()])
-    with sessions() as session:
-        try:
-            runs = ScheduledAutomationExecutor(session, registry).run_due(limit=limit)
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
+    with mysql_job_lock(engine, "marketingiq:automation-policies") as acquired:
+        if not acquired:
+            print(json.dumps({"reason": "already_running", "status": "skipped"}, sort_keys=True))
+            return
+        sessions = create_session_factory(engine)
+        with sessions() as session:
+            try:
+                runs = ScheduledAutomationExecutor(session, registry).run_due(limit=limit)
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
 
     print(
         json.dumps(
