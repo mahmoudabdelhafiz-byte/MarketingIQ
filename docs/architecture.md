@@ -76,8 +76,9 @@ or API credential is implemented in Sprint 1.
 - Super Admin is a platform-level `User.is_super_admin` flag, deliberately separate from
   `ORGANIZATION_ADMIN`, `MARKETING_USER` and `READ_ONLY` memberships. Authorization must check
   both tenant membership and action; super-admin access must be audited.
-- HTTP entry points must add schema validation, size limits, generic error responses, output
-  escaping, secure cookies and CSRF protection for cookie-authenticated mutations.
+- HTTP entry points use schema validation and generic error responses. Production responses
+  disable caching and add browser hardening headers; interactive API docs are disabled in production.
+  Secure cookies and CSRF protection remain requirements if cookie-authenticated mutations are added.
 - Identifiers, uniqueness, foreign keys and confidence ranges have database constraints.
 - Secrets come from environment/secret management. Provider payloads and credentials must not
   be logged. Audit logs record actor, tenant, action and target without secret values.
