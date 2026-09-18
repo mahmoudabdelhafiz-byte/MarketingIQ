@@ -6,7 +6,8 @@ import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from marketingiq.api.campaign_routes import register_campaign_routes
@@ -51,13 +52,32 @@ from marketingiq.infrastructure.providers import HunterProvider, PublicWebProvid
 bearer = HTTPBearer(auto_error=False)
 
 
+def _database_is_ready(engine) -> bool:
+    try:
+        with engine.connect() as connection:
+            return connection.scalar(text("SELECT 1")) == 1
+    except SQLAlchemyError:
+        return False
+
+
 def create_app(database_url: str | None = None, auth_secret: str | None = None) -> FastAPI:
     secret = auth_secret or os.environ.get("AUTH_SECRET")
     if not secret or len(secret) < 32:
         raise RuntimeError("AUTH_SECRET must contain at least 32 characters")
-    sessions = create_session_factory(create_database_engine(database_url))
+    engine = create_database_engine(database_url)
+    sessions = create_session_factory(engine)
     app = FastAPI(title="MarketingIQ internal API", version="1.0.0")
     app.state.provider_registry = ProviderRegistry([PublicWebProvider(), HunterProvider()])
+
+    @app.get("/health/live", include_in_schema=False)
+    def health_live():
+        return {"status": "ok"}
+
+    @app.get("/health/ready", include_in_schema=False)
+    def health_ready():
+        if not _database_is_ready(engine):
+            return JSONResponse({"status": "unavailable"}, status_code=503)
+        return {"status": "ok"}
 
     def session() -> Generator[Session, None, None]:
         with sessions() as value:
