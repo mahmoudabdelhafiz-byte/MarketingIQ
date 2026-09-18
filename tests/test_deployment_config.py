@@ -99,3 +99,17 @@ def test_optional_integrations_are_reported_without_exposing_secret_values():
     assert "openai-secret-value" not in rendered
     assert "hunter-secret-value" not in rendered
     assert "webhook-secret-that-is-at-least-32-characters" not in rendered
+
+
+def test_example_credentials_are_rejected():
+    env = {
+        "DATABASE_URL": (
+            "mysql+pymysql://marketingiq:change-me@db.example/marketingiq?charset=utf8mb4"
+        ),
+        "AUTH_SECRET": "replace-with-a-random-development-value",
+    }
+
+    report = validate_deployment_environment(env)
+
+    assert "DATABASE_URL must not use the example database password" in report.errors
+    assert "AUTH_SECRET must not use the example development value" in report.errors
