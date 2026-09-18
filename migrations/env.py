@@ -5,14 +5,25 @@ from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 from marketingiq.domain.models import Base
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
-if database_url := os.environ.get("DATABASE_URL"):
-    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+
+database_url = os.environ.get("DATABASE_URL", "").strip()
+if not database_url:
+    raise RuntimeError("DATABASE_URL must be set for Alembic migrations")
+try:
+    parsed_database_url = make_url(database_url)
+except ArgumentError as error:
+    raise RuntimeError("DATABASE_URL is invalid for Alembic migrations") from error
+if parsed_database_url.drivername != "mysql+pymysql":
+    raise RuntimeError("Alembic migrations require a mysql+pymysql DATABASE_URL")
+config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 target_metadata = Base.metadata
 
 

@@ -33,6 +33,10 @@ Before connecting to production services, run the offline configuration prefligh
 python -m marketingiq.jobs.validate_deployment
 ```
 
+Alembic has no checked-in fallback database URL. Keep the production MySQL `DATABASE_URL`
+exported in the same shell or hosting command environment used for migration execution. Migration
+commands fail closed when `DATABASE_URL` is missing, malformed, or not `mysql+pymysql`.
+
 Run the schema migration once against the hosting database before starting the application:
 
 ```bash

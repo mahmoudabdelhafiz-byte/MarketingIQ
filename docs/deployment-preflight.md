@@ -67,7 +67,7 @@ For the initial shared-hosting deployment, use this order:
 1. inject environment variables and secrets;
 2. run the offline configuration preflight;
 3. create or confirm the hosting MySQL database and dedicated user;
-4. run `alembic upgrade head` explicitly;
+4. keep the validated MySQL `DATABASE_URL` exported and run `alembic upgrade head` explicitly; Alembic has no checked-in fallback URL;
 5. start the API and verify `/health/live` and `/health/ready`;
 6. configure cron jobs separately only for the bounded jobs that are intentionally enabled;
 7. verify SMTP/IMAP/provider connectivity through their controlled operational paths.
