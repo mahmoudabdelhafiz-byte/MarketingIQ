@@ -17,7 +17,7 @@ def main() -> None:
         raise RuntimeError("MAILBOX_ENGAGEMENT_BATCH_SIZE must be an integer") from error
 
     engine = create_database_engine()
-    with mysql_job_lock(engine, "marketingiq:mailbox-engagement") as acquired:
+    with mysql_job_lock(engine, "mailbox-engagement") as acquired:
         if not acquired:
             print(json.dumps({"reason": "already_running", "status": "skipped"}, sort_keys=True))
             return
