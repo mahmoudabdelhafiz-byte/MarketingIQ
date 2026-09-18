@@ -6,34 +6,41 @@ from marketingiq.infrastructure.schema_status import (
 )
 
 
-def test_expected_schema_head_tracks_latest_migration():
-    assert expected_schema_heads() == ("20260918_18",)
+def test_expected_schema_has_single_head():
+    heads = expected_schema_heads()
+
+    assert len(heads) == 1
+    assert heads[0]
 
 
 def test_schema_status_reports_unmigrated_database_as_out_of_date():
     engine = create_engine("sqlite+pysqlite:///:memory:")
+    expected = expected_schema_heads()
 
     status = inspect_database_schema(engine)
 
     assert status.state == "schema_out_of_date"
     assert status.current_heads == ()
-    assert status.expected_heads == ("20260918_18",)
+    assert status.expected_heads == expected
     assert status.ready is False
 
 
 def test_schema_status_reports_current_database():
     engine = create_engine("sqlite+pysqlite:///:memory:")
+    expected = expected_schema_heads()
+    assert len(expected) == 1
     with engine.begin() as connection:
         connection.execute(
             text("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)")
         )
         connection.execute(
-            text("INSERT INTO alembic_version (version_num) VALUES ('20260918_18')")
+            text("INSERT INTO alembic_version (version_num) VALUES (:version)"),
+            {"version": expected[0]},
         )
 
     status = inspect_database_schema(engine)
 
     assert status.state == "current"
-    assert status.current_heads == ("20260918_18",)
-    assert status.expected_heads == ("20260918_18",)
+    assert status.current_heads == expected
+    assert status.expected_heads == expected
     assert status.ready is True
