@@ -87,6 +87,17 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
     app.state.environment = environment
     app.state.provider_registry = ProviderRegistry([PublicWebProvider(), HunterProvider()])
 
+    if production:
+        @app.middleware("http")
+        async def add_production_security_headers(request, call_next):
+            response = await call_next(request)
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Referrer-Policy"] = "no-referrer"
+            response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+            return response
+
     @app.get("/health/live", include_in_schema=False)
     def health_live():
         return {"status": "ok"}
