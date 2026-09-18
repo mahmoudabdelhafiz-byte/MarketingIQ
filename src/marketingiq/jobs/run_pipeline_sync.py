@@ -16,7 +16,7 @@ def main() -> None:
         raise RuntimeError("PIPELINE_SYNC_BATCH_SIZE must be an integer") from error
 
     engine = create_database_engine()
-    with mysql_job_lock(engine, "marketingiq:pipeline-sync") as acquired:
+    with mysql_job_lock(engine, "pipeline-sync") as acquired:
         if not acquired:
             print(json.dumps({"reason": "already_running", "status": "skipped"}, sort_keys=True))
             return
