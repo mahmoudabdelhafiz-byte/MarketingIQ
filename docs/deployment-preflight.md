@@ -68,9 +68,10 @@ For the initial shared-hosting deployment, use this order:
 2. run the offline configuration preflight;
 3. create or confirm the hosting MySQL database and dedicated user;
 4. keep the validated MySQL `DATABASE_URL` exported and run `alembic upgrade head` explicitly; Alembic has no checked-in fallback URL;
-5. start the API and verify `/health/live` and `/health/ready`;
-6. configure cron jobs separately only for the bounded jobs that are intentionally enabled;
-7. verify SMTP/IMAP/provider connectivity through their controlled operational paths.
+5. run `python -m marketingiq.jobs.verify_database_schema` and require a successful current-schema result;
+6. start the API and verify `/health/live` and `/health/ready`; readiness also requires the database schema to match the code's Alembic head;
+7. configure cron jobs separately only for the bounded jobs that are intentionally enabled;
+8. verify SMTP/IMAP/provider connectivity through their controlled operational paths.
 
 Passing the preflight is not a production deployment and does not execute migrations, install
 cron jobs, enable outbound sending, or validate external-provider credentials.

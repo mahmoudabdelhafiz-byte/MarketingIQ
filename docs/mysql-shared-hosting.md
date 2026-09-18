@@ -41,7 +41,12 @@ Run the schema migration once against the hosting database before starting the a
 
 ```bash
 alembic upgrade head
+python -m marketingiq.jobs.verify_database_schema
 ```
+
+The verifier is read-only. It compares the database's Alembic revision with the migration head
+shipped by the current code and exits non-zero when the database is unreachable, unmigrated, or
+behind/ahead of the code's expected head. It never executes a migration.
 
 Do not run development seed data automatically in production. A successful GitHub CI migration
 check proves the migration chain against a clean MySQL 8 database, but it does not prove that a
@@ -52,14 +57,15 @@ specific hosting database has been migrated.
 Expose the application health endpoints through the hosting platform or reverse proxy:
 
 - `GET /health/live` returns HTTP 200 when the API process can serve requests.
-- `GET /health/ready` performs a minimal `SELECT 1` against the configured application database.
-  It returns HTTP 200 when the database is reachable and HTTP 503 otherwise.
+- `GET /health/ready` verifies the configured database is reachable and its Alembic revision
+  exactly matches the migration head shipped by the running code. It returns HTTP 200 only when
+  both checks pass; otherwise it returns HTTP 503.
 
 These endpoints require no authentication so infrastructure health probes can call them, and they
-return only a coarse status without database URLs, credentials, exception text, provider
-configuration, tenant data, or other operational details. Database readiness does not verify SMTP,
-IMAP, external research providers, cron execution, or whether a production migration was actually
-run; those remain separate deployment checks.
+return only a coarse status without database URLs, credentials, exception text, migration revision
+IDs, provider configuration, tenant data, or other operational details. Readiness does not verify
+SMTP, IMAP, external research providers, or cron execution; those remain separate deployment
+checks.
 
 ## Security
 
