@@ -21,6 +21,9 @@ The preflight requires:
 - `DATABASE_URL` using `mysql+pymysql`, matching the current MySQL 8 shared-hosting target;
 - `AUTH_SECRET` with at least 32 characters;
 - rejection of the checked-in example database password and example development auth secret;
+- an explicit database backup strategy: `provider_managed` or `operator_managed`;
+- `DATABASE_BACKUP_RETENTION_DAYS` between 1 and 3650;
+- a non-future `DATABASE_RESTORE_TEST_DATE` in `YYYY-MM-DD` format;
 - a positive `DB_POOL_RECYCLE_SECONDS`;
 - bounded cron batch sizes matching the application limits:
   - `AUTOMATION_CRON_BATCH_SIZE`: 1–100;
@@ -28,7 +31,9 @@ The preflight requires:
   - `MAILBOX_ENGAGEMENT_BATCH_SIZE`: 1–1000.
 
 This is configuration validation only. It does not prove that the database exists, credentials
-authenticate, DNS resolves, TLS certificates are valid, migrations have run, or cron is installed.
+authenticate, DNS resolves, TLS certificates are valid, migrations have run, cron is installed,
+or a declared backup actually exists. The backup settings are an explicit operational gate; follow
+the database backup/restore runbook and perform a real restore rehearsal separately.
 
 ## Optional integrations
 
@@ -68,12 +73,20 @@ For the initial shared-hosting deployment, use this order:
 1. inject environment variables and secrets, including `APP_ENV=production`;
 2. run the offline configuration preflight;
 3. create or confirm the hosting MySQL database and dedicated user;
-4. keep the validated MySQL `DATABASE_URL` exported and run `alembic upgrade head` explicitly; Alembic has no checked-in fallback URL;
-5. run `python -m marketingiq.jobs.verify_database_schema` and require a successful current-schema result;
-6. start the API through `marketingiq.api.production:create_production_app` (for example with Uvicorn `--factory`) so production configuration is revalidated at process startup;
-7. verify `/health/live` and `/health/ready`; readiness also requires the database schema to match the code's Alembic head;
-8. configure cron jobs separately only for the bounded jobs that are intentionally enabled; each scheduled entrypoint uses a database-scoped zero-wait MySQL advisory lock to skip overlapping invocations;
-9. verify SMTP/IMAP/provider connectivity through their controlled operational paths.
+4. verify the declared backup strategy/retention and complete a restore rehearsal; record its date in `DATABASE_RESTORE_TEST_DATE`;
+5. immediately before a production schema change, create or confirm a fresh recoverable backup and record the pre-migration Alembic revision;
+6. keep the validated MySQL `DATABASE_URL` exported and run `alembic upgrade head` explicitly; Alembic has no checked-in fallback URL;
+7. run `python -m marketingiq.jobs.verify_database_schema` and require a successful current-schema result;
+8. start the API through `marketingiq.api.production:create_production_app` (for example with Uvicorn `--factory`) so production configuration is revalidated at process startup;
+9. verify `/health/live` and `/health/ready`; readiness also requires the database schema to match the code's Alembic head;
+10. configure cron jobs separately only for the bounded jobs that are intentionally enabled; each scheduled entrypoint uses a database-scoped zero-wait MySQL advisory lock to skip overlapping invocations;
+11. verify SMTP/IMAP/provider connectivity through their controlled operational paths.
 
 Passing the preflight is not a production deployment and does not execute migrations, install
 cron jobs, enable outbound sending, or validate external-provider credentials.
+
+## Recovery runbook
+
+See [Database backup and restore readiness](database-backup-restore.md) before the first production
+deployment and before any production migration. Passing preflight records that a recovery strategy
+has been declared; it does not create or restore a backup.
