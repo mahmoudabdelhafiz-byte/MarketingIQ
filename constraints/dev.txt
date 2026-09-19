@@ -1,6 +1,7 @@
 # Reviewed direct dependency versions for local development and CI.
 # Regenerate deliberately when upgrading; transitive dependencies remain governed by package metadata.
 hatchling==1.25.0
+a2wsgi==1.10.10
 alembic==1.13.3
 fastapi==0.115.0
 pwdlib==0.2.1
