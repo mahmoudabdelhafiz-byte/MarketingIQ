@@ -58,6 +58,20 @@ def test_api_tenant_isolation_and_shared_company(tmp_path):
         json={"name": "Safe", "slug": "safe", "criteria": [{"kind": "industry", "value": "SaaS"}]},
     )
     assert updated.status_code == 200
+    activated = client.patch(
+        f"/api/v1/organizations/{a_id}/products/{product_id}/activation",
+        headers=headers,
+        json={"active": True},
+    )
+    assert activated.status_code == 200
+    assert activated.json()["status"] == "ACTIVE"
+    deactivated = client.patch(
+        f"/api/v1/organizations/{a_id}/products/{product_id}/activation",
+        headers=headers,
+        json={"active": False},
+    )
+    assert deactivated.status_code == 200
+    assert deactivated.json()["status"] == "ARCHIVED"
     icp = client.post(
         f"/api/v1/organizations/{a_id}/products/{product_id}/icps",
         headers=headers,
