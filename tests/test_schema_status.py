@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine, text
 
 from marketingiq.infrastructure.schema_status import (
+    _resolve_migration_paths,
     expected_schema_heads,
     inspect_database_schema,
 )
@@ -11,6 +12,33 @@ def test_expected_schema_has_single_head():
 
     assert len(heads) == 1
     assert heads[0]
+
+
+def test_migration_paths_use_configured_project_root(monkeypatch, tmp_path):
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir()
+    alembic_ini = tmp_path / "alembic.ini"
+    alembic_ini.write_text("[alembic]\nscript_location = migrations\n", encoding="utf-8")
+    monkeypatch.setenv("MARKETINGIQ_PROJECT_ROOT", str(tmp_path))
+
+    resolved_ini, resolved_migrations = _resolve_migration_paths()
+
+    assert resolved_ini == alembic_ini
+    assert resolved_migrations == migrations_dir
+
+
+def test_migration_paths_use_current_working_directory(monkeypatch, tmp_path):
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir()
+    alembic_ini = tmp_path / "alembic.ini"
+    alembic_ini.write_text("[alembic]\nscript_location = migrations\n", encoding="utf-8")
+    monkeypatch.delenv("MARKETINGIQ_PROJECT_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    resolved_ini, resolved_migrations = _resolve_migration_paths()
+
+    assert resolved_ini == alembic_ini
+    assert resolved_migrations == migrations_dir
 
 
 def test_schema_status_reports_unmigrated_database_as_out_of_date():
