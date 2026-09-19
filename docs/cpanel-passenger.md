@@ -1,8 +1,12 @@
 # cPanel Passenger deployment
 
 MarketingIQ can run on cPanel's Python/Passenger application manager through a narrow WSGI
-compatibility layer. The application itself remains FastAPI/ASGI; `passenger_wsgi.py` adapts the
-guarded production ASGI application to the WSGI callable Passenger expects.
+compatibility layer. The application itself remains FastAPI/ASGI; `marketingiq_wsgi.py` adapts
+the guarded production ASGI application to the WSGI callable Passenger expects.
+
+Do not use `passenger_wsgi.py` as MarketingIQ's startup file. CloudLinux/cPanel may generate that
+filename as its own loader wrapper, so using the same name for application code can make the
+generated wrapper recursively load itself.
 
 The current MarketingIQ API uses ordinary HTTP request/response routes and has no WebSocket routes.
 If WebSockets are added later, use a native ASGI deployment instead of the WSGI adapter for those
@@ -16,7 +20,7 @@ For the Barmageyat deployment shown in cPanel, use:
 Python version: 3.12.14
 Application root: marketingiq
 Application URL: marketingiq.barmageyat.net
-Application startup file: passenger_wsgi.py
+Application startup file: marketingiq_wsgi.py
 Application Entry point: application
 ```
 
@@ -29,12 +33,15 @@ username.
 The application root must contain the repository checkout, including:
 
 ```text
-passenger_wsgi.py
+marketingiq_wsgi.py
 pyproject.toml
 src/
 migrations/
 alembic.ini
 ```
+
+If cPanel creates a `passenger_wsgi.py` wrapper in the application root, leave that generated file
+under cPanel's control rather than replacing it with repository application code.
 
 Install the project into the Python 3.12 virtual environment created by cPanel:
 
@@ -48,9 +55,9 @@ callable named `application`.
 
 ## Startup behavior
 
-Passenger imports `passenger_wsgi.py`. The module immediately runs the guarded
-`marketingiq.api.production:create_production_app` factory so invalid production configuration
-still fails closed during startup.
+Passenger loads `marketingiq_wsgi.py` through cPanel's generated wrapper. The module immediately
+runs the guarded `marketingiq.api.production:create_production_app` factory so invalid production
+configuration still fails closed during startup.
 
 The `a2wsgi.ASGIMiddleware` adapter itself is created lazily inside the Passenger worker on the
 first request. This avoids carrying adapter event-loop/thread state across Passenger's pre-fork
