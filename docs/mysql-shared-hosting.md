@@ -79,6 +79,17 @@ connect to providers, send outbound traffic, or install cron jobs.
 `marketingiq.api.app:create_app` remains suitable for local development and tests; the documented
 production process should use `marketingiq.api.production:create_production_app`.
 
+## cPanel Passenger alternative
+
+On shared cPanel hosting that exposes Python applications through Passenger/WSGI, use the
+repository's `passenger_wsgi.py` entrypoint instead of launching Uvicorn directly. See
+[cPanel Passenger deployment](cpanel-passenger.md) for the exact cPanel fields and installation
+sequence.
+
+The Passenger compatibility path still uses the guarded production factory and therefore preserves
+the same deployment preflight and HTTP security behavior. It is intended for the current HTTP API;
+a future WebSocket feature would require a native ASGI deployment.
+
 ## Health checks
 
 Expose the application health endpoints through the hosting platform or reverse proxy:
