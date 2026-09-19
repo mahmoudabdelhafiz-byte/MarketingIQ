@@ -7,6 +7,7 @@ from a2wsgi import ASGIMiddleware
 from marketingiq.api.production import create_production_app
 
 # cPanel/Passenger expects a WSGI callable named "application".
+# Keep this file separate from cPanel's generated passenger_wsgi.py wrapper.
 # Validate the production configuration at import time, but delay construction
 # of the ASGI-to-WSGI adapter until a worker handles its first request. This
 # avoids inheriting adapter event-loop state across Passenger's pre-fork model.

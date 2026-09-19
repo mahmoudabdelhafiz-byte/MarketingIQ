@@ -33,8 +33,8 @@ def _configure_valid_production_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
-def _load_passenger_module(name: str):
-    path = Path(__file__).resolve().parents[1] / "passenger_wsgi.py"
+def _load_wsgi_module(name: str):
+    path = Path(__file__).resolve().parents[1] / "marketingiq_wsgi.py"
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None
     assert spec.loader is not None
@@ -43,7 +43,7 @@ def _load_passenger_module(name: str):
     return module
 
 
-def test_passenger_entrypoint_fails_closed_on_invalid_production_config(monkeypatch):
+def test_wsgi_entrypoint_fails_closed_on_invalid_production_config(monkeypatch):
     _configure_valid_production_env(monkeypatch)
     monkeypatch.setenv("APP_ENV", "staging")
 
@@ -51,19 +51,19 @@ def test_passenger_entrypoint_fails_closed_on_invalid_production_config(monkeypa
         RuntimeError,
         match="APP_ENV must be production for deployment preflight",
     ):
-        _load_passenger_module("passenger_wsgi_invalid")
+        _load_wsgi_module("marketingiq_wsgi_invalid")
 
 
-def test_passenger_adapter_is_created_lazily(monkeypatch):
+def test_wsgi_adapter_is_created_lazily(monkeypatch):
     _configure_valid_production_env(monkeypatch)
-    module = _load_passenger_module("passenger_wsgi_lazy")
+    module = _load_wsgi_module("marketingiq_wsgi_lazy")
 
     assert module._wsgi_app is None
 
 
-def test_passenger_entrypoint_serves_hardened_health_endpoint(monkeypatch):
+def test_wsgi_entrypoint_serves_hardened_health_endpoint(monkeypatch):
     _configure_valid_production_env(monkeypatch)
-    module = _load_passenger_module("passenger_wsgi_valid")
+    module = _load_wsgi_module("marketingiq_wsgi_valid")
 
     assert module._wsgi_app is None
 

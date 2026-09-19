@@ -82,9 +82,10 @@ production process should use `marketingiq.api.production:create_production_app`
 ## cPanel Passenger alternative
 
 On shared cPanel hosting that exposes Python applications through Passenger/WSGI, use the
-repository's `passenger_wsgi.py` entrypoint instead of launching Uvicorn directly. See
-[cPanel Passenger deployment](cpanel-passenger.md) for the exact cPanel fields and installation
-sequence.
+repository's `marketingiq_wsgi.py` entrypoint instead of launching Uvicorn directly. Do not use
+`passenger_wsgi.py` for repository application code because cPanel/CloudLinux may generate that
+filename as its own loader wrapper. See [cPanel Passenger deployment](cpanel-passenger.md) for the
+exact cPanel fields and installation sequence.
 
 The Passenger compatibility path still uses the guarded production factory and therefore preserves
 the same deployment preflight and HTTP security behavior. It is intended for the current HTTP API;
