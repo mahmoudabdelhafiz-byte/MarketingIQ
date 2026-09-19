@@ -48,12 +48,15 @@ callable named `application`.
 
 ## Startup behavior
 
-Passenger imports `passenger_wsgi.py`. That file immediately calls the guarded
-`marketingiq.api.production:create_production_app` factory before wrapping it with
-`a2wsgi.ASGIMiddleware`.
+Passenger imports `passenger_wsgi.py`. The module immediately runs the guarded
+`marketingiq.api.production:create_production_app` factory so invalid production configuration
+still fails closed during startup.
 
-This means Passenger startup fails closed unless the production deployment preflight is valid,
-including:
+The `a2wsgi.ASGIMiddleware` adapter itself is created lazily inside the Passenger worker on the
+first request. This avoids carrying adapter event-loop/thread state across Passenger's pre-fork
+worker creation while preserving the same WSGI entrypoint.
+
+Production startup requires:
 
 - `APP_ENV=production`;
 - a valid database URL and non-example auth secret;
