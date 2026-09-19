@@ -54,9 +54,18 @@ def test_passenger_entrypoint_fails_closed_on_invalid_production_config(monkeypa
         _load_passenger_module("passenger_wsgi_invalid")
 
 
+def test_passenger_adapter_is_created_lazily(monkeypatch):
+    _configure_valid_production_env(monkeypatch)
+    module = _load_passenger_module("passenger_wsgi_lazy")
+
+    assert module._wsgi_app is None
+
+
 def test_passenger_entrypoint_serves_hardened_health_endpoint(monkeypatch):
     _configure_valid_production_env(monkeypatch)
     module = _load_passenger_module("passenger_wsgi_valid")
+
+    assert module._wsgi_app is None
 
     environ: dict[str, object] = {}
     setup_testing_defaults(environ)
@@ -80,6 +89,7 @@ def test_passenger_entrypoint_serves_hardened_health_endpoint(monkeypatch):
 
     body = b"".join(module.application(environ, start_response))
 
+    assert module._wsgi_app is not None
     assert str(captured["status"]).startswith("200")
     headers = {str(k).lower(): str(v) for k, v in dict(captured["headers"]).items()}
     assert headers["cache-control"] == "no-store"
