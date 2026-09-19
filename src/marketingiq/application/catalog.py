@@ -157,9 +157,12 @@ class CatalogService:
         return product
 
     def set_product_active(self, product_id: str, active: bool) -> Product:
-        return self.update_product(
-            product_id, status=ProductStatus.ACTIVE if active else ProductStatus.ARCHIVED
-        )
+        require_permission(self.tenant, Permission.WRITE_CATALOG)
+        product = self.get_product(product_id)
+        product.status = ProductStatus.ACTIVE if active else ProductStatus.ARCHIVED
+        _audit(self.session, self.tenant, "product.activation_changed", product)
+        self._commit()
+        return product
 
     def list_icps(self, product_id: str) -> list[ICP]:
         self.get_product(product_id)
