@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,9 +11,34 @@ from alembic.util.exc import CommandError
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
-_REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-_ALEMBIC_INI = _REPOSITORY_ROOT / "alembic.ini"
-_MIGRATIONS_DIR = _REPOSITORY_ROOT / "migrations"
+_PROJECT_ROOT_ENV = "MARKETINGIQ_PROJECT_ROOT"
+_SOURCE_REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _resolve_migration_paths() -> tuple[Path, Path]:
+    candidates: list[Path] = []
+    configured_root = os.environ.get(_PROJECT_ROOT_ENV, "").strip()
+    if configured_root:
+        candidates.append(Path(configured_root).expanduser())
+
+    candidates.extend((Path.cwd(), _SOURCE_REPOSITORY_ROOT))
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        root = candidate.resolve()
+        if root in seen:
+            continue
+        seen.add(root)
+
+        alembic_ini = root / "alembic.ini"
+        migrations_dir = root / "migrations"
+        if alembic_ini.is_file() and migrations_dir.is_dir():
+            return alembic_ini, migrations_dir
+
+    raise FileNotFoundError(
+        "Could not locate alembic.ini and migrations/. "
+        f"Set {_PROJECT_ROOT_ENV} to the MarketingIQ application root."
+    )
 
 
 @dataclass(frozen=True)
@@ -34,8 +60,9 @@ class DatabaseSchemaStatus:
 
 
 def expected_schema_heads() -> tuple[str, ...]:
-    config = Config(str(_ALEMBIC_INI))
-    config.set_main_option("script_location", str(_MIGRATIONS_DIR))
+    alembic_ini, migrations_dir = _resolve_migration_paths()
+    config = Config(str(alembic_ini))
+    config.set_main_option("script_location", str(migrations_dir))
     return tuple(sorted(ScriptDirectory.from_config(config).get_heads()))
 
 

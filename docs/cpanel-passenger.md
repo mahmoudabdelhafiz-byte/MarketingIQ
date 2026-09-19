@@ -73,12 +73,18 @@ Before application startup, the required core configuration includes:
 
 ```text
 APP_ENV=production
+MARKETINGIQ_PROJECT_ROOT=/home/<cpanel-user>/<application-root>
 DATABASE_URL=mysql+pymysql://USER:PASSWORD@HOST:3306/DATABASE?charset=utf8mb4
 AUTH_SECRET=<at-least-32-random-characters>
 DATABASE_BACKUP_STRATEGY=provider_managed
 DATABASE_BACKUP_RETENTION_DAYS=7
 DATABASE_RESTORE_TEST_DATE=YYYY-MM-DD
 ```
+
+`MARKETINGIQ_PROJECT_ROOT` should point to the directory containing both `alembic.ini` and
+`migrations/`. The schema readiness check also falls back to the process working directory and
+the source checkout, but setting this value explicitly avoids depending on Passenger's working
+directory when the package is installed into a virtual environment.
 
 Do not enter a fake restore-test date merely to satisfy startup. Complete the restore rehearsal
 first and record its actual successful date.
