@@ -84,6 +84,31 @@ if command -v cloudlinux-selector >/dev/null 2>&1; then
     add "cPanel app env var names (values not shown): $names"
   else
     warn "cloudlinux-selector present but app env vars could not be read for $rel_root"
+    shape=$(cloudlinux-selector get --json --interpreter python 2>&1 | python3 -c '
+import json, sys
+raw = sys.stdin.read()
+try:
+    data = json.loads(raw)
+except ValueError:
+    print("non-JSON output, first 120 chars: " + raw[:120].replace("\n", " "))
+    raise SystemExit
+def walk(node, path, out):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "env_vars" and isinstance(value, dict):
+                out.append(path + ".env_vars{" + ",".join(sorted(value)) + "}")
+            else:
+                walk(value, path + "." + str(key), out)
+    elif isinstance(node, list):
+        for item in node[:3]:
+            walk(item, path + "[]", out)
+    else:
+        out.append(path)
+out = []
+walk(data, "", out)
+print(" ".join(sorted(set(out)))[:1500])
+' 2>&1)
+    add "cloudlinux-selector shape: $shape"
   fi
 else
   warn "cloudlinux-selector not available"
