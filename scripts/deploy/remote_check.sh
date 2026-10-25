@@ -35,7 +35,31 @@ if [ -d "$APP_ROOT" ]; then
     add "Git remote: ${remote:-none}"
     if [ "$dirty" != "0" ]; then warn "Git checkout has $dirty locally modified tracked file(s)"; fi
   else
-    warn "App root is not a git checkout (deploy will need a one-time git setup)"
+    warn "App root is not a git checkout (first deploy needs bootstrap=true)"
+    compare_ref="${COMPARE_REF:-main}"
+    scratch=$(mktemp -d)
+    if git clone --quiet --depth 1 --branch "$compare_ref" \
+        https://github.com/mahmoudabdelhafiz-byte/MarketingIQ.git "$scratch/repo" 2>/dev/null; then
+      changed=()
+      missing=()
+      while IFS= read -r path; do
+        if [ ! -e "$APP_ROOT/$path" ]; then
+          missing+=("$path")
+        elif ! cmp -s "$scratch/repo/$path" "$APP_ROOT/$path"; then
+          changed+=("$path")
+        fi
+      done < <(git -C "$scratch/repo" ls-files)
+      add "Compared with $compare_ref ($(git -C "$scratch/repo" log -1 --format='%h %cs')): ${#changed[@]} file(s) differ, ${#missing[@]} file(s) not on server"
+      [ "${#changed[@]}" -gt 0 ] && add "Differ on server: $(printf '%s ' "${changed[@]:0:25}")"
+      [ "${#missing[@]}" -gt 0 ] && add "Not on server: $(printf '%s ' "${missing[@]:0:15}")"
+      extra=$(cd "$APP_ROOT" && find . -path ./tmp -prune -o -path ./.well-known -prune -o -type f -print 2>/dev/null \
+        | sed 's#^\./##' | grep -v -E '(^|/)__pycache__/|\.pyc$|\.egg-info/|^build/' \
+        | while IFS= read -r f; do [ -e "$scratch/repo/$f" ] || echo "$f"; done | head -n 25 | tr '\n' ' ')
+      add "Only on server (kept by deploy): ${extra:-none}"
+    else
+      warn "Could not clone the repository from GitHub for comparison"
+    fi
+    rm -rf "$scratch"
   fi
 else
   warn "App root $APP_ROOT does not exist"
