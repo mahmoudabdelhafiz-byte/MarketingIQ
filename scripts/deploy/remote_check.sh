@@ -3,7 +3,11 @@
 # It changes nothing on the server and never prints secret values.
 set -u
 
-APP_ROOT="${APP_ROOT:-$HOME/marketingiq}"
+if [ -z "${APP_ROOT:-}" ]; then
+  # cPanel names the virtualenv after the application root folder.
+  venv_dir=$(ls -d "$HOME"/virtualenv/*/3.12* 2>/dev/null | head -n 1)
+  APP_ROOT="$HOME/$(basename "$(dirname "${venv_dir:-$HOME/virtualenv/marketingiq/x}")")"
+fi
 APP_VENV="${APP_VENV:-}"
 ENV_FILE="${MARKETINGIQ_ENV_FILE:-$HOME/.marketingiq/env}"
 report=()
@@ -70,6 +74,19 @@ if [ -f "$ENV_FILE" ]; then
   [ "$perms" = "600" ] || [ "$perms" = "400" ] || warn "Env file should be chmod 600"
 else
   warn "Env file $ENV_FILE not found (needed for migrations over SSH)"
+fi
+
+if command -v cloudlinux-selector >/dev/null 2>&1; then
+  rel_root="${APP_ROOT#"$HOME"/}"
+  names=$(cloudlinux-selector get --json --interpreter python --app-root "$rel_root" 2>/dev/null \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(sorted((d.get("data") or d).get("env_vars") or {})))' 2>/dev/null)
+  if [ -n "$names" ]; then
+    add "cPanel app env var names (values not shown): $names"
+  else
+    warn "cloudlinux-selector present but app env vars could not be read for $rel_root"
+  fi
+else
+  warn "cloudlinux-selector not available"
 fi
 
 [ -d "$APP_ROOT/tmp" ] && add "Passenger restart dir: $APP_ROOT/tmp" || warn "No $APP_ROOT/tmp yet (deploy creates it)"
