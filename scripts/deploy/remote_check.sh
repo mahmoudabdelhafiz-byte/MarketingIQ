@@ -35,6 +35,17 @@ if [ -d "$APP_ROOT" ]; then
   fi
 else
   warn "App root $APP_ROOT does not exist"
+  found=$(find "$HOME" -maxdepth 3 -name marketingiq_wsgi.py -not -path '*/virtualenv/*' 2>/dev/null \
+    | xargs -r -n1 dirname | tr '\n' ' ')
+  add "Folders containing marketingiq_wsgi.py: ${found:-none}"
+  for dir in $found; do
+    if git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      add "  $dir is a git checkout at $(git -C "$dir" log -1 --format='%h %cs') on $(git -C "$dir" rev-parse --abbrev-ref HEAD), remote $(git -C "$dir" remote get-url origin 2>/dev/null | sed -E 's#//[^@/]*@#//#')"
+    else
+      add "  $dir is not a git checkout; files dated $(stat -c '%y' "$dir/marketingiq_wsgi.py" | cut -d. -f1)"
+    fi
+    [ -f "$dir/passenger_wsgi.py" ] && add "  $dir has cPanel passenger_wsgi.py"
+  done
 fi
 
 if [ -z "$APP_VENV" ]; then
