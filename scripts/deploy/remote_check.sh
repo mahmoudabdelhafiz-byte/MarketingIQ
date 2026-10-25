@@ -76,39 +76,30 @@ else
   warn "Env file $ENV_FILE not found (needed for migrations over SSH)"
 fi
 
+# Production settings saved in cPanel "Setup Python App" (names only; values are never printed).
+CPANEL_ENV_PY='
+import json, os, shlex, subprocess, sys
+mode, app_root = sys.argv[1], sys.argv[2]
+raw = subprocess.run(["cloudlinux-selector", "get", "--json", "--interpreter", "python"],
+                     capture_output=True, text=True).stdout
+env = None
+for version in (json.loads(raw).get("available_versions") or {}).values():
+    for user in ((version or {}).get("users") or {}).values():
+        app = ((user or {}).get("applications") or {}).get(app_root)
+        if app is not None:
+            env = app.get("env_vars") or {}
+if env is None:
+    sys.exit(3)
+for key in sorted(env):
+    print(key if mode == "names" else f"export {key}={shlex.quote(str(env[key]))}")
+'
 if command -v cloudlinux-selector >/dev/null 2>&1; then
   rel_root="${APP_ROOT#"$HOME"/}"
-  names=$(cloudlinux-selector get --json --interpreter python --app-root "$rel_root" 2>/dev/null \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(sorted((d.get("data") or d).get("env_vars") or {})))' 2>/dev/null)
+  names=$(python3 -c "$CPANEL_ENV_PY" names "$rel_root" 2>/dev/null | tr '\n' ' ')
   if [ -n "$names" ]; then
-    add "cPanel app env var names (values not shown): $names"
+    add "cPanel app env var names: $names"
   else
-    warn "cloudlinux-selector present but app env vars could not be read for $rel_root"
-    shape=$(cloudlinux-selector get --json --interpreter python 2>&1 | python3 -c '
-import json, sys
-raw = sys.stdin.read()
-try:
-    data = json.loads(raw)
-except ValueError:
-    print("non-JSON output, first 120 chars: " + raw[:120].replace("\n", " "))
-    raise SystemExit
-def walk(node, path, out):
-    if isinstance(node, dict):
-        for key, value in node.items():
-            if key == "env_vars" and isinstance(value, dict):
-                out.append(path + ".env_vars{" + ",".join(sorted(value)) + "}")
-            else:
-                walk(value, path + "." + str(key), out)
-    elif isinstance(node, list):
-        for item in node[:3]:
-            walk(item, path + "[]", out)
-    else:
-        out.append(path)
-out = []
-walk(data, "", out)
-print(" ".join(sorted(set(out)))[:1500])
-' 2>&1)
-    add "cloudlinux-selector shape: $shape"
+    warn "Could not read cPanel app env vars for $rel_root"
   fi
 else
   warn "cloudlinux-selector not available"
