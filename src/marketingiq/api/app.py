@@ -47,7 +47,7 @@ from marketingiq.application.research import CompanyResearchService, ProviderReg
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.models import OrganizationMembership, ReviewAction, User
 from marketingiq.infrastructure.database import create_database_engine, create_session_factory
-from marketingiq.infrastructure.discovery_provider import AnthropicCompanyDiscoveryProvider
+from marketingiq.infrastructure.discovery_provider import build_discovery_provider
 from marketingiq.infrastructure.providers import HunterProvider, PublicWebProvider
 from marketingiq.infrastructure.schema_status import inspect_database_schema
 
@@ -88,7 +88,7 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
     )
     app.state.environment = environment
     app.state.provider_registry = ProviderRegistry([PublicWebProvider(), HunterProvider()])
-    app.state.discovery_provider = AnthropicCompanyDiscoveryProvider()
+    app.state.discovery_provider = build_discovery_provider()
 
     if production:
         @app.middleware("http")

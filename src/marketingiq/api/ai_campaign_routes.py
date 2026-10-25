@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from marketingiq.application.ai_campaigns import GroundedAICampaignService
 from marketingiq.application.campaigns import CampaignDraftService
 from marketingiq.application.tenant import TenantContext
-from marketingiq.infrastructure.campaign_ai_provider import OpenAICampaignAIProvider
+from marketingiq.infrastructure.campaign_ai_provider import build_campaign_ai_provider
 
 
 class AICampaignDraftRequest(BaseModel):
@@ -30,7 +30,7 @@ def register_ai_campaign_routes(
         context: TenantContext = Depends(tenant_dependency),
         db: Session = Depends(session_dependency),
     ) -> GroundedAICampaignService:
-        return GroundedAICampaignService(db, context, OpenAICampaignAIProvider())
+        return GroundedAICampaignService(db, context, build_campaign_ai_provider())
 
     base = prefix + "/companies/{relationship_id}/campaign-drafts"
 
@@ -51,7 +51,7 @@ def register_ai_campaign_routes(
 
     @app.get(prefix + "/campaign-ai/status")
     def campaign_ai_status(context: TenantContext = Depends(tenant_dependency)):
-        provider = OpenAICampaignAIProvider()
+        provider = build_campaign_ai_provider()
         return provider.status()
 
 

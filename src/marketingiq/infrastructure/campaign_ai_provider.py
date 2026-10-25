@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Mapping
 from typing import Any
 
 import httpx
@@ -12,82 +13,86 @@ from marketingiq.domain.campaign_ai import (
     CampaignAIRequest,
     CampaignAIResult,
 )
+from marketingiq.infrastructure.ai_config import (
+    DEFAULT_MODELS,
+    AIFeature,
+    AIProviderName,
+    AIProviderSettings,
+    resolve_ai_settings,
+)
+from marketingiq.infrastructure.llm_clients import (
+    OPENAI_RESPONSES_URL,
+    LLMError,
+    build_llm_client,
+    strip_json_fences,
+)
 
 PROMPT_VERSION = "grounded-campaign-ai-v1"
-DEFAULT_MODEL = "gpt-5.6-luna"
-RESPONSES_URL = "https://api.openai.com/v1/responses"
+DEFAULT_MODEL = DEFAULT_MODELS[(AIFeature.CAMPAIGN, AIProviderName.OPENAI)]
+RESPONSES_URL = OPENAI_RESPONSES_URL
+MAX_OUTPUT_TOKENS = 900
 
 
-class OpenAICampaignAIProvider:
-    key = "OPENAI"
+class LLMCampaignAIProvider:
+    """Grounded campaign drafting on whichever provider the settings select."""
 
-    def __init__(self) -> None:
-        self.api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-        self.model = os.environ.get("CAMPAIGN_AI_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
-        self.timeout_seconds = float(os.environ.get("CAMPAIGN_AI_TIMEOUT_SECONDS", "30"))
+    def __init__(self, settings: AIProviderSettings, client: httpx.Client | None = None) -> None:
+        self.settings = settings
+        self.key = settings.provider_label.upper()
+        self.model = settings.model
+        self._client = build_llm_client(settings, client) if settings.provider else None
 
     @property
     def configured(self) -> bool:
-        return bool(self.api_key)
+        return self.settings.configured
 
     def generate(self, request: CampaignAIRequest) -> CampaignAIResult:
-        if not self.configured:
+        if self._client is None or not self.configured:
             raise CampaignAIProviderError("NOT_CONFIGURED")
-
-        payload = {
-            "model": self.model,
-            "input": _prompt(request),
-            "max_output_tokens": 900,
-        }
         try:
-            response = httpx.post(
-                RESPONSES_URL,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=self.timeout_seconds,
-            )
-        except (httpx.TimeoutException, httpx.NetworkError):
-            raise CampaignAIProviderError("NETWORK_ERROR") from None
-
-        if response.status_code == 429:
-            raise CampaignAIProviderError("RATE_LIMITED")
-        if response.status_code in {401, 403}:
-            raise CampaignAIProviderError("AUTHENTICATION_ERROR")
-        if response.status_code >= 500:
-            raise CampaignAIProviderError("PROVIDER_UNAVAILABLE")
-        if response.status_code >= 400:
-            raise CampaignAIProviderError("PROVIDER_REJECTED_REQUEST")
-
+            response = self._client.complete(_prompt(request), max_output_tokens=MAX_OUTPUT_TOKENS)
+        except LLMError as error:
+            raise CampaignAIProviderError(error.category) from None
         try:
-            data = response.json()
-            raw_text = _response_text(data)
-            parsed = json.loads(raw_text)
+            parsed = json.loads(strip_json_fences(response.text))
             subject = str(parsed["subject"]).strip()
             body = str(parsed["body"]).strip()
             used_fact_keys = tuple(sorted({str(x) for x in parsed.get("used_fact_keys", [])}))
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        except (ValueError, KeyError, TypeError, AttributeError, json.JSONDecodeError):
             raise CampaignAIProviderError("INVALID_PROVIDER_RESPONSE") from None
-
-        usage = data.get("usage") or {}
         return CampaignAIResult(
             subject=subject,
             body=body,
             used_fact_keys=used_fact_keys,
             model=self.model,
-            input_tokens=_int_or_none(usage.get("input_tokens")),
-            output_tokens=_int_or_none(usage.get("output_tokens")),
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
         )
 
     def status(self) -> dict[str, Any]:
         return {
             "provider_key": self.key,
+            "provider": self.settings.provider_label,
             "configured": self.configured,
             "model": self.model,
             "prompt_version": PROMPT_VERSION,
+            "configuration_error": self.settings.error,
         }
+
+
+class OpenAICampaignAIProvider(LLMCampaignAIProvider):
+    """Backwards-compatible OpenAI-only constructor (reads OPENAI_API_KEY / CAMPAIGN_AI_MODEL)."""
+
+    def __init__(self, client: httpx.Client | None = None) -> None:
+        env = dict(os.environ)
+        env["CAMPAIGN_AI_PROVIDER"] = AIProviderName.OPENAI.value
+        super().__init__(resolve_ai_settings(AIFeature.CAMPAIGN, env), client)
+
+
+def build_campaign_ai_provider(
+    env: Mapping[str, str] | None = None, client: httpx.Client | None = None
+) -> LLMCampaignAIProvider:
+    return LLMCampaignAIProvider(resolve_ai_settings(AIFeature.CAMPAIGN, env), client)
 
 
 def request_fingerprint(request: CampaignAIRequest) -> str:
@@ -136,19 +141,3 @@ def _prompt(request: CampaignAIRequest) -> str:
         "approved_facts": facts,
     }
     return json.dumps(instructions, ensure_ascii=False, separators=(",", ":"))
-
-
-def _response_text(data: dict[str, Any]) -> str:
-    for output in data.get("output") or []:
-        for content in output.get("content") or []:
-            text = content.get("text")
-            if isinstance(text, str) and text.strip():
-                return text.strip()
-    raise ValueError("response text missing")
-
-
-def _int_or_none(value: Any) -> int | None:
-    try:
-        return int(value) if value is not None else None
-    except (TypeError, ValueError):
-        return None

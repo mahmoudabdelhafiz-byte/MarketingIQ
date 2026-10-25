@@ -45,8 +45,11 @@ username/password pairing, port range, boolean syntax, and mutually exclusive SS
 When IMAP settings are present, it validates host, username, password, mailbox, port range, boolean
 syntax, and mutually exclusive SSL/STARTTLS modes.
 
-When `OPENAI_API_KEY` is present, the campaign model must be non-empty and the configured timeout
-must be greater than zero.
+For AI features the preflight resolves the provider (`AI_PROVIDER`, `CAMPAIGN_AI_PROVIDER`,
+`DISCOVERY_AI_PROVIDER`; default `openai`). It rejects an unknown provider, a model that belongs to
+another vendor, a missing key when a provider was explicitly selected, a non-positive timeout, and a
+non-HTTPS `DEEPSEEK_BASE_URL`. `campaign_ai` and `company_discovery` report whether each feature is
+usable. See [AI provider selection](ai-providers.md).
 
 When `ENGAGEMENT_WEBHOOK_SECRET` is present, it must contain at least 32 characters and the
 signature age window must be between 30 and 3600 seconds.

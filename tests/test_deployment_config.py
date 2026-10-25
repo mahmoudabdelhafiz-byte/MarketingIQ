@@ -21,6 +21,10 @@ def test_minimal_shared_hosting_config_is_valid():
         "smtp": False,
         "imap": False,
         "openai": False,
+        "anthropic": False,
+        "deepseek": False,
+        "campaign_ai": False,
+        "company_discovery": False,
         "hunter": False,
         "engagement_webhook": False,
     }
@@ -98,6 +102,8 @@ def test_optional_integrations_are_reported_without_exposing_secret_values():
 
     assert report.ok is True
     assert report.integrations["openai"] is True
+    assert report.integrations["campaign_ai"] is True
+    assert report.integrations["company_discovery"] is True
     assert report.integrations["hunter"] is True
     assert report.integrations["engagement_webhook"] is True
     assert "openai-secret-value" not in rendered
@@ -179,3 +185,43 @@ def test_database_restore_test_date_must_use_iso_date():
 
     assert report.ok is False
     assert "DATABASE_RESTORE_TEST_DATE must use YYYY-MM-DD" in report.errors
+
+
+def test_ai_provider_selection_is_validated():
+    switched = {**_valid_env(), "AI_PROVIDER": "deepseek", "DEEPSEEK_API_KEY": "ds-secret"}
+    report = validate_deployment_environment(switched)
+    assert report.ok is True
+    assert report.integrations["campaign_ai"] is True
+    assert report.integrations["company_discovery"] is True
+    assert "ds-secret" not in str(report.as_dict())
+
+    missing_key = {**_valid_env(), "AI_PROVIDER": "anthropic"}
+    report = validate_deployment_environment(missing_key)
+    assert "ANTHROPIC_API_KEY is required because the campaign AI provider is anthropic" in (
+        report.errors
+    )
+
+    stale_model = {
+        **_valid_env(),
+        "AI_PROVIDER": "anthropic",
+        "ANTHROPIC_API_KEY": "key",
+        "CAMPAIGN_AI_MODEL": "gpt-5.6-luna",
+    }
+    report = validate_deployment_environment(stale_model)
+    assert any("CAMPAIGN_AI_MODEL 'gpt-5.6-luna'" in error for error in report.errors)
+    assert report.integrations["campaign_ai"] is False
+    assert report.integrations["company_discovery"] is True
+
+    unknown = {**_valid_env(), "DISCOVERY_AI_PROVIDER": "gemini"}
+    report = validate_deployment_environment(unknown)
+    assert any("Unsupported AI provider 'gemini'" in error for error in report.errors)
+
+    mixed = {
+        **_valid_env(),
+        "OPENAI_API_KEY": "o-key",
+        "DISCOVERY_AI_PROVIDER": "deepseek",
+        "DEEPSEEK_API_KEY": "d-key",
+        "DEEPSEEK_BASE_URL": "http://insecure.example",
+    }
+    report = validate_deployment_environment(mixed)
+    assert report.errors == ("DEEPSEEK_BASE_URL must use https",)

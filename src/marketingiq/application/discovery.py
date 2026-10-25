@@ -100,6 +100,7 @@ class CompanyDiscoveryService:
             "provider_key": self.provider.key,
             "configured": self.provider.configured,
             "model": self.provider.model,
+            "configuration_error": getattr(self.provider, "configuration_error", None),
             "workflow_version": WORKFLOW_VERSION,
             "daily_run_limit": self.daily_run_limit,
             "runs_today": runs_today,
@@ -117,7 +118,11 @@ class CompanyDiscoveryService:
             raise ConflictError("Archived products cannot be used for discovery")
         icp = self._active_icp(product.id)
         if not self.provider.configured:
-            raise ConflictError("Company discovery provider is not configured")
+            reason = getattr(self.provider, "configuration_error", None)
+            raise ConflictError(
+                "Company discovery provider is not configured"
+                + (f": {reason}" if reason else "")
+            )
         if self._runs_since(self._day_start()) >= self.daily_run_limit:
             raise ConflictError("Daily company discovery run limit reached")
 

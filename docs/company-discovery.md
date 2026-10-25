@@ -22,12 +22,14 @@ still come only from the explicit, credit-gated contact-discovery workflow.
 
 ## Grounding and validation
 
-The default adapter is `AnthropicCompanyDiscoveryProvider`: Claude via the Anthropic Messages API
-with the server-side web search tool (`web_search_20250305`). Web content is untrusted, so the
-application layer does not rely on the model's word:
+Discovery runs on OpenAI, Claude or DeepSeek, selected by `AI_PROVIDER` or
+`DISCOVERY_AI_PROVIDER` (see [AI provider selection](ai-providers.md)). OpenAI and Claude use their
+built-in web search tools; DeepSeek plans queries, calls the DeepSeek Search API, then selects
+companies from those results. Web content is untrusted, so the application layer does not rely on
+the model's word:
 
-- **Grounded sources only.** The adapter reports every URL the web search tool actually retrieved
-  (search results and citation targets). A candidate keeps only the source URLs that appear in that
+- **Grounded sources only.** The adapter reports every URL its search step actually retrieved
+  (search results, consulted sources and citation targets). A candidate keeps only the source URLs that appear in that
   set; a candidate with none is `SKIPPED / UNGROUNDED`. A model cannot cite a page it never fetched.
 - **Domain validation.** Domains go through the same `normalize_domain` used by CSV import
   (no IPs, credentials, ports or paths). Invalid ones are `SKIPPED / INVALID_DOMAIN`.
@@ -61,19 +63,20 @@ application layer does not rely on the model's word:
 ## Configuration
 
 ```text
-ANTHROPIC_API_KEY=            # empty = discovery not configured (no spend possible)
-DISCOVERY_AI_MODEL=claude-sonnet-5-5
+DISCOVERY_AI_PROVIDER=        # optional; otherwise AI_PROVIDER, default openai
+DISCOVERY_AI_MODEL=           # optional; blank = provider default
 DISCOVERY_AI_TIMEOUT_SECONDS=180
 DISCOVERY_MAX_SEARCHES=8
 DISCOVERY_MAX_OUTPUT_TOKENS=6000
 DISCOVERY_DAILY_RUN_LIMIT=5
 ```
 
-The key is read from the environment only; it is never stored, logged, or returned by the status
-endpoint. Provider failures are persisted as `FAILED` runs with a safe category (`RATE_LIMITED`,
+The selected provider's key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY` or `DEEPSEEK_API_KEY`) is read
+from the environment only; it is never stored, logged, or returned by the status endpoint. An empty
+key means discovery is not configured and no spend is possible. Provider failures are persisted as `FAILED` runs with a safe category (`RATE_LIMITED`,
 `AUTHENTICATION_ERROR`, `NETWORK_ERROR`, `PROVIDER_UNAVAILABLE`, `PROVIDER_REJECTED_REQUEST`,
-`MALFORMED_RESPONSE`, `INCOMPLETE_RESPONSE`); provider error text is not stored. Long searches that
-return `stop_reason: pause_turn` are resumed up to three times.
+`INSUFFICIENT_BALANCE`, `MALFORMED_RESPONSE`, `INCOMPLETE_RESPONSE`, `SEARCH_UNAVAILABLE`);
+provider error text is not stored.
 
 ## API
 

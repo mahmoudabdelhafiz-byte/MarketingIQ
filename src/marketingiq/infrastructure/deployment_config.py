@@ -8,6 +8,14 @@ from datetime import date
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
+from marketingiq.infrastructure.ai_config import (
+    API_KEY_ENV,
+    DEFAULT_TIMEOUTS,
+    AIFeature,
+    AIProviderName,
+    resolve_ai_settings,
+)
+
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
 _PRODUCTION_ENVIRONMENT = "production"
@@ -169,16 +177,7 @@ def validate_deployment_environment(
         if imap_ssl is True and imap_starttls is True:
             errors.append("IMAP_USE_SSL and IMAP_STARTTLS cannot both be true")
 
-    openai_enabled = bool(values.get("OPENAI_API_KEY", "").strip())
-    if openai_enabled:
-        _require(values, errors, "CAMPAIGN_AI_MODEL", default="gpt-5.6-luna")
-        _validate_float(
-            values,
-            errors,
-            "CAMPAIGN_AI_TIMEOUT_SECONDS",
-            default="30",
-            minimum_exclusive=0,
-        )
+    ai_enabled = {feature: _validate_ai_feature(values, errors, feature) for feature in AIFeature}
 
     webhook_enabled = bool(values.get("ENGAGEMENT_WEBHOOK_SECRET", "").strip())
     if webhook_enabled:
@@ -196,11 +195,44 @@ def validate_deployment_environment(
     integrations = {
         "smtp": smtp_enabled,
         "imap": imap_enabled,
-        "openai": openai_enabled,
+        "openai": bool(values.get("OPENAI_API_KEY", "").strip()),
+        "anthropic": bool(values.get("ANTHROPIC_API_KEY", "").strip()),
+        "deepseek": bool(values.get("DEEPSEEK_API_KEY", "").strip()),
+        "campaign_ai": ai_enabled[AIFeature.CAMPAIGN],
+        "company_discovery": ai_enabled[AIFeature.DISCOVERY],
         "hunter": bool(values.get("HUNTER_API_KEY", "").strip()),
         "engagement_webhook": webhook_enabled,
     }
     return DeploymentConfigReport(tuple(errors), integrations)
+
+
+def _validate_ai_feature(
+    env: Mapping[str, str], errors: list[str], feature: AIFeature
+) -> bool:
+    """Validate one AI feature's provider selection; returns whether the feature is usable."""
+
+    settings = resolve_ai_settings(feature, env)
+    if settings.error or settings.provider is None:
+        errors.append(settings.error or f"{feature.value} AI provider is invalid")
+        return False
+    explicitly_selected = _any_value(env, f"{feature.value}_AI_PROVIDER", "AI_PROVIDER")
+    if explicitly_selected and not settings.api_key:
+        errors.append(
+            f"{API_KEY_ENV[settings.provider]} is required because the "
+            f"{feature.value.lower()} AI provider is {settings.provider.value}"
+        )
+    if settings.api_key:
+        _validate_float(
+            env,
+            errors,
+            f"{feature.value}_AI_TIMEOUT_SECONDS",
+            default=f"{DEFAULT_TIMEOUTS[feature]:g}",
+            minimum_exclusive=0,
+        )
+    if settings.provider == AIProviderName.DEEPSEEK and env.get("DEEPSEEK_BASE_URL", "").strip():
+        if not env["DEEPSEEK_BASE_URL"].strip().startswith("https://"):
+            errors.append("DEEPSEEK_BASE_URL must use https")
+    return settings.configured
 
 
 def _any_value(env: Mapping[str, str], *names: str) -> bool:

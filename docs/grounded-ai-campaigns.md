@@ -17,7 +17,7 @@ AI output must declare which approved fact keys it used. Any unsupported key or 
 
 ## Cost control
 
-Leave `OPENAI_API_KEY` empty to keep deterministic generation only. The AI endpoint defaults to deterministic fallback when AI is unavailable. The configured model is controlled by `CAMPAIGN_AI_MODEL`.
+The provider is selected by `AI_PROVIDER` or `CAMPAIGN_AI_PROVIDER` (`openai`, `anthropic` or `deepseek`; default `openai`). See [AI provider selection](ai-providers.md). Leave the selected provider's key empty to keep deterministic generation only. The AI endpoint defaults to deterministic fallback when AI is unavailable or misconfigured. `CAMPAIGN_AI_MODEL` overrides the provider's default model.
 
 ## API
 
