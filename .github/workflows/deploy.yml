@@ -8,6 +8,7 @@ name: Deploy
 #   SSH_PRIVATE_KEY  private key authorized in cPanel "SSH Access" (dedicated deploy key)
 #   SSH_PORT         optional, default 22
 #   SSH_KNOWN_HOSTS  optional but recommended: output of `ssh-keyscan -p PORT HOST`
+#   SSH_KEY_PASSPHRASE optional: only if the private key has a passphrase
 # Repository variables (same page -> Variables):
 #   APP_ROOT   optional, default /home/<user>/marketingiq
 #   APP_VENV   optional, path to the cPanel virtualenv bin/activate (auto-detected otherwise)
@@ -77,10 +78,16 @@ jobs:
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_KEY_PASSPHRASE: ${{ secrets.SSH_KEY_PASSPHRASE }}
         run: |
           install -d -m 700 ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+          if [ -n "$SSH_KEY_PASSPHRASE" ]; then
+            # Decrypt the runner's temporary copy only; the key on the server is unchanged.
+            ssh-keygen -p -q -P "$SSH_KEY_PASSPHRASE" -N "" -f ~/.ssh/deploy_key >/dev/null \
+              || { echo "::error title=Key passphrase::SSH_KEY_PASSPHRASE does not unlock SSH_PRIVATE_KEY"; exit 1; }
+          fi
           port="${SSH_PORT:-22}"
           if [ -n "$SSH_KNOWN_HOSTS" ]; then
             printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts

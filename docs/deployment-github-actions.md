@@ -14,6 +14,7 @@ server, so no person or tool needs the cPanel password.
    - `SSH_USER`: the cPanel user name
    - `SSH_PORT`: only if it is not 22
    - `SSH_PRIVATE_KEY`: the whole private key, including the `BEGIN` and `END` lines
+   - `SSH_KEY_PASSPHRASE`: only if the key was created with a passphrase
    - `SSH_KNOWN_HOSTS` (recommended): the output of `ssh-keyscan -p PORT HOST`, run once from a
      computer you trust. This pins the server's identity.
 3. **GitHub variables** (same page, *Variables* tab, all optional):
