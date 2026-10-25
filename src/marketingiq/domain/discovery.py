@@ -127,7 +127,13 @@ class CompanyDiscoveryRun(Base):
     model: Mapped[str | None] = mapped_column(String(100))
     workflow_version: Mapped[str] = mapped_column(String(100))
     status: Mapped[DiscoveryRunStatus] = mapped_column(
-        Enum(DiscoveryRunStatus, native_enum=False, validate_strings=True, create_constraint=True)
+        Enum(
+            DiscoveryRunStatus,
+            name="company_discovery_runs_status",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+        )
     )
     requested_max_results: Mapped[int] = mapped_column(Integer)
     excluded_domain_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -168,16 +174,29 @@ class CompanyDiscoveryCandidate(Base):
     status: Mapped[DiscoveryCandidateStatus] = mapped_column(
         Enum(
             DiscoveryCandidateStatus,
+            name="company_discovery_candidates_status",
             native_enum=False,
             validate_strings=True,
             create_constraint=True,
         )
     )
     skip_reason: Mapped[DiscoverySkipReason | None] = mapped_column(
-        Enum(DiscoverySkipReason, native_enum=False, validate_strings=True, create_constraint=True)
+        Enum(
+            DiscoverySkipReason,
+            name="company_discovery_candidates_skip_reason",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+        )
     )
     classification: Mapped[DataClassification] = mapped_column(
-        Enum(DataClassification, native_enum=False, validate_strings=True, create_constraint=True),
+        Enum(
+            DataClassification,
+            name="company_discovery_candidates_classification",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+        ),
         default=DataClassification.MARKETINGIQ_DERIVED,
     )
     organization_company_id: Mapped[str | None] = mapped_column(
