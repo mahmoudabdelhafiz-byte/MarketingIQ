@@ -129,6 +129,60 @@ else
   warn "cloudlinux-selector not available"
 fi
 
+# Database state, read-only: engine version, applied Alembic revision, migration files present.
+if [ -n "${names:-}" ] && [ -n "${APP_VENV:-}" ] && [ -f "$APP_VENV" ]; then
+  db_report=$(
+    set -a
+    eval "$(python3 -c "$CPANEL_ENV_PY" exports "$rel_root" 2>/dev/null)"
+    set +a
+    # shellcheck disable=SC1090
+    . "$APP_VENV"
+    cd "$APP_ROOT" && python - <<'PY' 2>&1 | tail -n 12
+import ast
+import pathlib
+
+from sqlalchemy import create_engine, text
+
+from marketingiq.infrastructure.database import create_database_engine
+
+engine = create_database_engine()
+with engine.connect() as connection:
+    version = connection.scalar(text("SELECT VERSION()"))
+    try:
+        applied = [row[0] for row in connection.execute(text("SELECT version_num FROM alembic_version"))]
+    except Exception as error:  # noqa: BLE001
+        applied = [f"unreadable: {type(error).__name__}"]
+    tables = sorted(
+        row[0] for row in connection.execute(text("SHOW TABLES"))
+        if "discovery" in row[0] or "decision" in row[0] or "throttle" in row[0] or "unsubscribe" in row[0]
+    )
+print(f"DB engine: {version}")
+print(f"DB applied revision: {', '.join(applied)}")
+print(f"DB tables of interest: {' '.join(tables) or 'none'}")
+revisions = {}
+for path in sorted(pathlib.Path("migrations/versions").glob("*.py")):
+    tree = ast.parse(path.read_text())
+    values = {}
+    for node in tree.body:
+        target = getattr(node, "target", None) or (node.targets[0] if getattr(node, "targets", None) else None)
+        if isinstance(target, ast.Name) and target.id in {"revision", "down_revision"}:
+            try:
+                values[target.id] = ast.literal_eval(node.value)
+            except ValueError:
+                pass
+    revisions[values.get("revision")] = values.get("down_revision")
+children = {parent for parent in revisions.values()}
+heads = sorted(rev for rev in revisions if rev not in children)
+latest = sorted(revisions)[-4:]
+print(f"Migration files on server: {len(revisions)}; heads: {', '.join(map(str, heads))}")
+print("Latest revisions: " + "; ".join(f"{rev}<-{revisions[rev]}" for rev in latest))
+PY
+  )
+  while IFS= read -r line; do add "$line"; done <<< "$db_report"
+  src_extra=$(cd "$APP_ROOT" && find src -name '*.py' -newer pyproject.toml 2>/dev/null | head -n 20 | tr '\n' ' ')
+  add "src files newer than pyproject.toml: ${src_extra:-none}"
+fi
+
 [ -d "$APP_ROOT/tmp" ] && add "Passenger restart dir: $APP_ROOT/tmp" || warn "No $APP_ROOT/tmp yet (deploy creates it)"
 
 # GitHub annotations: one notice for the report, one warning for anything that needs attention.
