@@ -107,6 +107,37 @@ jobs:
         run: |
           ssh server "APP_ROOT='${APP_ROOT}' APP_VENV='${APP_VENV}' bash -s" < scripts/deploy/remote_check.sh
 
+      - name: Diagnose SSH failure
+        if: failure()
+        run: |
+          port="${SSH_PORT:-22}"
+          lines=()
+          lines+=("Target port: $port")
+          if timeout 10 bash -c "</dev/tcp/$SSH_HOST/$port" 2>/dev/null; then
+            lines+=("TCP: port $port is reachable from GitHub")
+          else
+            lines+=("TCP: cannot reach port $port (wrong port, SSH disabled, or firewall/IP allow-list)")
+          fi
+          if [ -s ~/.ssh/known_hosts ]; then
+            lines+=("Host key: obtained ($(awk '{print $2}' ~/.ssh/known_hosts | sort -u | tr '\n' ' '))")
+          else
+            lines+=("Host key: none received from server")
+          fi
+          head -n 1 ~/.ssh/deploy_key | grep -q -- "-----BEGIN" \
+            && lines+=("Key format: $(head -n 1 ~/.ssh/deploy_key | tr -d '-' | xargs)") \
+            || lines+=("Key format: first line is not a -----BEGIN ... KEY----- header")
+          if ssh-keygen -y -P "" -f ~/.ssh/deploy_key >/dev/null 2>&1; then
+            lines+=("Key: readable without passphrase")
+          else
+            lines+=("Key: cannot be read (passphrase-protected, PuTTY .ppk format, or pasted incompletely)")
+          fi
+          verbose=$(ssh -v -o ConnectTimeout=15 server true 2>&1 \
+            | grep -E "Connecting to|Connection established|Remote protocol|Server host key|Authentications that can continue|Offering public key|Server accepts key|Permission denied|Authenticated|Connection (refused|timed out|closed)|Host key verification failed|No route|Could not resolve" \
+            | sed -E 's/^debug1: //' | head -n 15)
+          while IFS= read -r line; do lines+=("ssh: $line"); done <<< "$verbose"
+          msg=$(printf '%s\n' "${lines[@]}" | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')
+          echo "::warning title=SSH diagnosis::$msg"
+
       - name: Deploy
         if: env.MODE == 'deploy'
         run: |
