@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from marketingiq.api.campaign_routes import register_campaign_routes
+from marketingiq.api.discovery_routes import register_discovery_routes
 from marketingiq.api.schemas import (
     Activation,
     CompanyAttach,
@@ -46,6 +47,7 @@ from marketingiq.application.research import CompanyResearchService, ProviderReg
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.models import OrganizationMembership, ReviewAction, User
 from marketingiq.infrastructure.database import create_database_engine, create_session_factory
+from marketingiq.infrastructure.discovery_provider import AnthropicCompanyDiscoveryProvider
 from marketingiq.infrastructure.providers import HunterProvider, PublicWebProvider
 from marketingiq.infrastructure.schema_status import inspect_database_schema
 
@@ -86,6 +88,7 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
     )
     app.state.environment = environment
     app.state.provider_registry = ProviderRegistry([PublicWebProvider(), HunterProvider()])
+    app.state.discovery_provider = AnthropicCompanyDiscoveryProvider()
 
     if production:
         @app.middleware("http")
@@ -536,6 +539,9 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
         return app.state.provider_registry.status()
 
     register_campaign_routes(app, prefix, tenant, session)
+    register_discovery_routes(
+        app, prefix, tenant, session, lambda: app.state.discovery_provider
+    )
     return app
 
 

@@ -55,6 +55,7 @@ schema.
 - [Database backup and restore readiness](docs/database-backup-restore.md)
 - [Sprint boundaries](docs/sprint-boundaries.md)
 - [Company repository and CSV import](docs/company-repository.md)
+- [Company discovery](docs/company-discovery.md)
 - [ADR 0001: modular monolith and shared company identity](docs/adr/0001-foundation.md)
 - [ADR 0002: MySQL production database for shared hosting](docs/adr/0002-mysql-shared-hosting.md)
 
