@@ -1,0 +1,128 @@
+name: Deploy
+
+# Deploys MarketingIQ to the cPanel shared-hosting account over SSH.
+#
+# Repository secrets (Settings -> Secrets and variables -> Actions -> Secrets):
+#   SSH_HOST         server host name
+#   SSH_USER         cPanel user name
+#   SSH_PRIVATE_KEY  private key authorized in cPanel "SSH Access" (dedicated deploy key)
+#   SSH_PORT         optional, default 22
+#   SSH_KNOWN_HOSTS  optional but recommended: output of `ssh-keyscan -p PORT HOST`
+# Repository variables (same page -> Variables):
+#   APP_ROOT   optional, default /home/<user>/marketingiq
+#   APP_VENV   optional, path to the cPanel virtualenv bin/activate (auto-detected otherwise)
+#   APP_URL    optional, e.g. https://marketingiq.barmageyat.net (enables health checks)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "test = read-only server check; deploy = update the live site"
+        type: choice
+        options: [test, deploy]
+        default: test
+      ref:
+        description: "Branch to deploy"
+        default: main
+  push:
+    # Pushing to this branch runs the read-only check before the workflow is on main.
+    branches: [ops/deploy-pipeline]
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'test' }}
+      DEPLOY_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || 'main' }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      APP_ROOT: ${{ vars.APP_ROOT }}
+      APP_VENV: ${{ vars.APP_VENV }}
+      APP_URL: ${{ vars.APP_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check configuration
+        run: |
+          missing=""
+          [ -n "$SSH_HOST" ] || missing="$missing SSH_HOST"
+          [ -n "$SSH_USER" ] || missing="$missing SSH_USER"
+          [ "${{ secrets.SSH_PRIVATE_KEY != '' }}" = "true" ] || missing="$missing SSH_PRIVATE_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error title=Missing secrets::Add these repository secrets:$missing"
+            exit 1
+          fi
+          if [ "$MODE" = "deploy" ] && [ "${{ github.ref_name }}" != "main" ]; then
+            echo "::error::Deploy mode must be started from the main branch workflow"
+            exit 1
+          fi
+
+      - name: Set up SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          port="${SSH_PORT:-22}"
+          if [ -n "$SSH_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning title=Host key not pinned::Add SSH_KNOWN_HOSTS so the server identity is verified"
+            ssh-keyscan -p "$port" -T 15 "$SSH_HOST" > ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+          {
+            echo "Host server"
+            echo "  HostName $SSH_HOST"
+            echo "  User $SSH_USER"
+            echo "  Port $port"
+            echo "  IdentityFile ~/.ssh/deploy_key"
+            echo "  IdentitiesOnly yes"
+            echo "  StrictHostKeyChecking yes"
+            echo "  BatchMode yes"
+            echo "  ConnectTimeout 20"
+            echo "  ServerAliveInterval 15"
+          } > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+      - name: Server check (read-only)
+        run: |
+          ssh server "APP_ROOT='${APP_ROOT}' APP_VENV='${APP_VENV}' bash -s" < scripts/deploy/remote_check.sh
+
+      - name: Deploy
+        if: env.MODE == 'deploy'
+        run: |
+          ssh server "APP_ROOT='${APP_ROOT}' APP_VENV='${APP_VENV}' DEPLOY_REF='${DEPLOY_REF}' bash -s" \
+            < scripts/deploy/remote_deploy.sh
+
+      - name: Health check
+        if: env.APP_URL != ''
+        run: |
+          for path in /health/live /health/ready; do
+            ok=""
+            for attempt in 1 2 3 4 5 6; do
+              code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "${APP_URL%/}$path" || true)
+              if [ "$code" = "200" ]; then ok=1; break; fi
+              sleep 10
+            done
+            if [ -z "$ok" ]; then
+              echo "::error title=Health check failed::$path returned $code"
+              exit 1
+            fi
+            echo "::notice title=Health::$path OK"
+          done
+
+      - name: Remove key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
