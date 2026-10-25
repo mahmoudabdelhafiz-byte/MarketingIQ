@@ -58,6 +58,13 @@ jobs:
           [ -n "$SSH_USER" ] || missing="$missing SSH_USER"
           [ "${{ secrets.SSH_PRIVATE_KEY != '' }}" = "true" ] || missing="$missing SSH_PRIVATE_KEY"
           if [ -n "$missing" ]; then
+            as_vars=""
+            [ "${{ vars.SSH_HOST != '' }}" = "true" ] && as_vars="$as_vars SSH_HOST"
+            [ "${{ vars.SSH_USER != '' }}" = "true" ] && as_vars="$as_vars SSH_USER"
+            [ "${{ vars.SSH_PRIVATE_KEY != '' }}" = "true" ] && as_vars="$as_vars SSH_PRIVATE_KEY"
+            if [ -n "$as_vars" ]; then
+              echo "::error title=Saved as variables::These were added as Variables, not Secrets:$as_vars. Delete them from Variables and add them under Secrets."
+            fi
             echo "::error title=Missing secrets::Add these repository secrets:$missing"
             exit 1
           fi
