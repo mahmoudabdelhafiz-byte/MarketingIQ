@@ -114,6 +114,10 @@ jobs:
         run: |
           ssh server "APP_ROOT='${APP_ROOT}' APP_VENV='${APP_VENV}' bash -s" < scripts/deploy/remote_check.sh
 
+      - name: Locate unpushed code (read-only, temporary)
+        if: env.MODE == 'test'
+        run: ssh server "bash -s" < scripts/deploy/locate_code.sh
+
       - name: Diagnose SSH failure
         if: failure()
         run: |
