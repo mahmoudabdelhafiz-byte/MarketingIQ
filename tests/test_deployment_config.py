@@ -21,6 +21,11 @@ def test_minimal_shared_hosting_config_is_valid():
         "smtp": False,
         "imap": False,
         "openai": False,
+        "anthropic": False,
+        "deepseek": False,
+        "campaign_ai": False,
+        "ai_company_discovery": False,
+        "decision_maker_ai": False,
         "hunter": False,
         "engagement_webhook": False,
     }
@@ -200,3 +205,43 @@ def test_smtp_requires_https_public_url_for_unsubscribe_links():
     assert "MARKETINGIQ_PUBLIC_URL must be an absolute https:// URL" in insecure.errors
     assert valid.ok is True
     assert valid.integrations["smtp"] is True
+
+
+def test_ai_provider_selection_is_validated():
+    switched = {**_valid_env(), "AI_PROVIDER": "deepseek", "DEEPSEEK_API_KEY": "ds-secret"}
+    report = validate_deployment_environment(switched)
+    assert report.ok is True
+    assert report.integrations["campaign_ai"] is True
+    assert report.integrations["ai_company_discovery"] is True
+    assert report.integrations["decision_maker_ai"] is True
+    assert "ds-secret" not in str(report.as_dict())
+
+    report = validate_deployment_environment({**_valid_env(), "AI_PROVIDER": "anthropic"})
+    assert report.errors == (
+        "ANTHROPIC_API_KEY is required because AI provider anthropic is selected",
+    )
+
+    stale_model = {
+        **_valid_env(),
+        "AI_PROVIDER": "anthropic",
+        "ANTHROPIC_API_KEY": "key",
+        "CAMPAIGN_AI_MODEL": "gpt-5.6-luna",
+    }
+    report = validate_deployment_environment(stale_model)
+    assert any("CAMPAIGN_AI_MODEL 'gpt-5.6-luna'" in error for error in report.errors)
+    assert report.integrations["campaign_ai"] is False
+    assert report.integrations["ai_company_discovery"] is True
+    # The decision-maker resolver ignores an inherited model from another vendor.
+    assert report.integrations["decision_maker_ai"] is True
+
+    report = validate_deployment_environment({**_valid_env(), "DISCOVERY_AI_PROVIDER": "gemini"})
+    assert any("Unsupported AI provider 'gemini'" in error for error in report.errors)
+
+    mixed = {
+        **_valid_env(),
+        "OPENAI_API_KEY": "o-key",
+        "DISCOVERY_AI_PROVIDER": "deepseek",
+        "DEEPSEEK_API_KEY": "d-key",
+        "DEEPSEEK_BASE_URL": "http://insecure.example",
+    }
+    assert validate_deployment_environment(mixed).errors == ("DEEPSEEK_BASE_URL must use https",)

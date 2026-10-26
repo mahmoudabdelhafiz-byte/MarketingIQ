@@ -2342,13 +2342,22 @@
   ];
   const HEADCOUNTS = ["1-10", "11-50", "51-200", "201-500", "501-1000", "1001-5000", "5001-10000", "10001+"];
   const DISCOVERY_ERRORS = {
-    DISCOVERY_PROVIDER_NOT_CONFIGURED: "Hunter is not configured (HUNTER_API_KEY).",
+    DISCOVERY_PROVIDER_NOT_CONFIGURED: "The search source is not configured (HUNTER_API_KEY, or the AI provider's API key).",
     DISCOVERY_NO_DISCOVER_ACCESS: "Your Hunter plan does not include Discover.",
-    DISCOVERY_RATE_LIMITED: "Hunter rate limit reached; it will retry on the next run.",
-    DISCOVERY_AUTHENTICATION_ERROR: "Hunter rejected the API key.",
+    DISCOVERY_RATE_LIMITED: "The search provider's rate limit was reached; it will retry on the next run.",
+    DISCOVERY_AUTHENTICATION_ERROR: "The search provider rejected the API key.",
     DISCOVERY_INVALID_FILTER: "Hunter rejected one of the filters. Edit the rule.",
     DISCOVERY_RUN_AS_PERMISSION_DENIED: "The rule's owner no longer has permission to run it.",
+    DISCOVERY_DAILY_LIMIT: "Today's AI search limit is used up; the rule runs again tomorrow.",
+    DISCOVERY_UNKNOWN_SOURCE: "This rule's search source is no longer available. Edit the rule.",
+    DISCOVERY_INSUFFICIENT_BALANCE: "The AI provider account has no balance left.",
+    DISCOVERY_MALFORMED_RESPONSE: "The AI search returned an unusable answer; it will retry on the next run.",
+    DISCOVERY_INCOMPLETE_RESPONSE: "The AI search did not finish; it will retry on the next run.",
+    DISCOVERY_SEARCH_UNAVAILABLE: "DeepSeek search is unavailable right now; it will retry on the next run.",
+    DISCOVERY_NETWORK_ERROR: "The search provider could not be reached; it will retry on the next run.",
+    DISCOVERY_PROVIDER_UNAVAILABLE: "The search provider is temporarily unavailable; it will retry on the next run.",
   };
+  const AI_SOURCE = "AI_WEB_SEARCH";
 
   const cadenceLabel = (minutes) =>
     CADENCES.find((c) => Number(c.value) === Number(minutes))?.label || `Every ${Math.round(minutes / 60)} h`;
@@ -2397,7 +2406,8 @@
     };
   }
 
-  function openRuleForm(productList, productId, criteria, onSaved) {
+  function openRuleForm(productList, productId, criteria, onSaved, sourceName = "Hunter Discover") {
+    const source = criteria.provider_key || "HUNTER";
     const product = select(productList.map((p) => ({ value: p.id, label: p.name })), { value: productId });
     const name = input({ maxlength: 200, value: `${productList.find((p) => p.id === productId)?.name || "Product"} discovery` });
     const form = criteriaForm(criteria);
@@ -2408,7 +2418,14 @@
     modal(
       "Automatic company discovery",
       [
-        h("p", { class: "muted small" }, "On each run, MarketingIQ searches Hunter Discover (free, no credits), adds up to the limit of companies you don't have yet, marks them “discovered”, and optionally runs research → fit → qualification on each. Nothing is ever emailed without your approval."),
+        h(
+          "p",
+          { class: "muted small" },
+          source === AI_SOURCE
+            ? `On each run, MarketingIQ asks ${sourceName} to research the web (each run counts toward today's AI search limit), keeps only companies backed by a page the search actually read, adds up to the limit of companies you don't have yet, marks them “discovered”, and optionally runs research → fit → qualification on each. Nothing is ever emailed without your approval.`
+            : "On each run, MarketingIQ searches Hunter Discover (free, no credits), adds up to the limit of companies you don't have yet, marks them “discovered”, and optionally runs research → fit → qualification on each. Nothing is ever emailed without your approval.",
+        ),
+        h("p", { class: "small" }, h("strong", null, "Search with: "), sourceName),
         h("div", { class: "form-grid" }, field("Rule name", name), field("Product", product)),
         form.node,
         h("div", { class: "form-grid" }, field("How often", cadence), field("New companies per run (max)", maxNew)),
@@ -2421,6 +2438,7 @@
           await post("/company-discovery/policies", {
             name: name.value.trim() || null,
             product_id: product.value,
+            provider_key: source,
             ...form.value(),
             cadence_minutes: Number(cadence.value),
             max_new_per_run: Number(maxNew.value) || 20,
@@ -2455,14 +2473,36 @@
   }
 
   async function viewAutomation() {
-    const [productList, rules, schedules, companies, research] = await Promise.all([
+    const [productList, rules, schedules, companies, research, sourceList] = await Promise.all([
       products(true),
       get("/company-discovery/policies"),
       soft(get("/automation-policies"), []),
       get("/companies"),
       soft(get("/providers/status"), []),
+      soft(get("/company-discovery/sources"), []),
     ]);
     const hunterReady = research.some((p) => p.provider_key === "HUNTER" && p.credentials_configured);
+    const sources = sourceList.length ? sourceList : [{ key: "HUNTER", label: "Hunter Discover", configured: hunterReady, costs_credits: false }];
+    const sourceName = (key) => sources.find((s) => s.key === (key || "HUNTER"))?.label || (key === AI_SOURCE ? "AI web search" : "Hunter Discover");
+    const aiReady = sources.some((s) => s.costs_credits && s.configured);
+    const sourcePick = select(
+      sources.map((s) => ({ value: s.key, label: s.costs_credits ? `${s.label}${s.provider ? ` (${s.provider})` : ""}, uses AI credits` : `${s.label}, free` })),
+      { value: "HUNTER" },
+    );
+    const sourceHint = h("span", { class: "hint" });
+    const describeSource = () => {
+      const s = sources.find((x) => x.key === sourcePick.value);
+      if (!s) return void (sourceHint.textContent = "");
+      if (!s.configured) {
+        sourceHint.textContent = s.configuration_error || (s.costs_credits ? "Not configured: add the AI provider's API key in the hosting settings, then Restart." : "Not configured: add HUNTER_API_KEY in the hosting settings, then Restart.");
+        return;
+      }
+      sourceHint.textContent = s.costs_credits
+        ? `${s.model || ""} · ${Math.max(0, (s.daily_limit || 0) - (s.used_today || 0))} of ${s.daily_limit} AI searches left today. Only companies backed by a web page the search actually read are listed.`
+        : "Free: Hunter Discover uses no credits.";
+    };
+    sourcePick.addEventListener("change", describeSource);
+    describeSource();
     const productName = (id) => productList.find((p) => p.id === id)?.name || "—";
     const companyName = (id) => companies.find((c) => c.id === id)?.canonical_name || "—";
 
@@ -2493,6 +2533,17 @@
           drawResults(preview);
         }),
       );
+      const hasEvidence = preview.companies.some((c) => c.rationale || (c.source_urls || []).length);
+      const evidence = {
+        label: "Why it matches",
+        render: (c) =>
+          h(
+            "div",
+            { class: "small" },
+            c.rationale ? h("div", null, c.rationale) : null,
+            (c.source_urls || []).map((url, i) => [h("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, `source ${i + 1}`), " "]),
+          ),
+      };
       append(clear(results), [
         h("div", { class: "card-head" }, h("h3", null, `${preview.companies.length} companies found${preview.total_results ? ` (of ${preview.total_results} matching)` : ""}`), preview.companies.length ? addButton : null),
         (preview.notes || []).length ? h("p", { class: "muted small" }, preview.notes.join(" ")) : null,
@@ -2508,6 +2559,7 @@
             },
             { label: "Company", render: (c) => h("strong", null, c.name) },
             { label: "Domain", render: (c) => h("a", { href: `https://${c.domain}`, target: "_blank", rel: "noopener noreferrer" }, c.domain) },
+            ...(hasEvidence ? [evidence] : []),
             { label: "", render: (c) => (c.already_in_list ? badge("already in list") : null) },
           ],
           preview.companies,
@@ -2522,13 +2574,15 @@
       pageHead("Automation", "Find new target companies automatically and keep their research up to date. Emails always need your approval."),
       hunterReady
         ? null
-        : h("div", { class: "card" }, h("strong", null, "Hunter is not configured. "), "Company discovery and contact search need a HUNTER_API_KEY in the hosting settings (Setup Python App → Environment variables), then Restart."),
+        : h("div", { class: "card" }, h("strong", null, "Hunter is not configured. "), aiReady ? "Contact search needs a HUNTER_API_KEY; you can still find companies with AI web search." : "Company discovery and contact search need a HUNTER_API_KEY in the hosting settings (Setup Python App → Environment variables), then Restart."),
       h(
         "div",
         { class: "card" },
         h("div", { class: "card-head" }, h("h2", null, "Find companies now")),
-        h("p", { class: "muted small" }, "Filters are pre-filled from the product's active ICP. Searching is free (Hunter Discover uses no credits)."),
-        picker.empty ? h("div", { class: "empty" }, "Create a product first.") : [field("Product", picker.el), finder],
+        h("p", { class: "muted small" }, "Filters are pre-filled from the product's active ICP. Hunter Discover is free; AI web search uses your AI provider and counts toward a daily limit."),
+        picker.empty
+          ? h("div", { class: "empty" }, "Create a product first.")
+          : [h("div", { class: "form-grid" }, field("Product", picker.el), h("label", { class: "field" }, h("span", null, "Search with"), sourcePick, sourceHint)), finder],
         h(
           "div",
           { class: "row" },
@@ -2539,7 +2593,7 @@
               disabled: picker.empty,
               onclick: (e) =>
                 run(e.currentTarget, async () => {
-                  const preview = await post("/company-discovery/preview", form.value());
+                  const preview = await post("/company-discovery/preview", { ...form.value(), provider_key: sourcePick.value });
                   drawResults(preview);
                 }),
             },
@@ -2550,7 +2604,7 @@
             {
               class: "btn",
               disabled: picker.empty,
-              onclick: () => openRuleForm(productList, picker.el.value, form.value(), refresh),
+              onclick: () => openRuleForm(productList, picker.el.value, { ...form.value(), provider_key: sourcePick.value }, refresh, sourceName(sourcePick.value)),
             },
             "Save as automatic rule…",
           ),
@@ -2564,7 +2618,7 @@
         table(
           [
             { label: "Rule", render: (r) => h("div", null, h("strong", null, r.name), h("div", { class: "muted small" }, productName(r.product_id))) },
-            { label: "Looks for", render: (r) => criteriaSummary(r) },
+            { label: "Looks for", render: (r) => h("div", null, criteriaSummary(r), h("div", { class: "muted small" }, sourceName(r.provider_key))) },
             { label: "Schedule", render: (r) => `${cadenceLabel(r.cadence_minutes)} · up to ${r.max_new_per_run}` },
             { label: "Then", render: (r) => (r.run_workflow ? (r.allow_provider_credits ? "Research → qualify → contacts" : "Research → qualify") : "Just add") },
             { label: "Status", render: (r) => badge(r.enabled ? "ACTIVE" : "PAUSED") },
