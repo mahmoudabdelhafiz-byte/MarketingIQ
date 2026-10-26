@@ -38,6 +38,7 @@ permissions:
 
 jobs:
   deploy:
+    if: ${{ !contains(github.event.head_commit.message, '[import-release]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -79,44 +80,11 @@ jobs:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
           SSH_KEY_PASSPHRASE: ${{ secrets.SSH_KEY_PASSPHRASE }}
-        run: |
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          if [ -n "$SSH_KEY_PASSPHRASE" ]; then
-            # Decrypt the runner's temporary copy only; the key on the server is unchanged.
-            ssh-keygen -p -q -P "$SSH_KEY_PASSPHRASE" -N "" -f ~/.ssh/deploy_key >/dev/null \
-              || { echo "::error title=Key passphrase::SSH_KEY_PASSPHRASE does not unlock SSH_PRIVATE_KEY"; exit 1; }
-          fi
-          port="${SSH_PORT:-22}"
-          if [ -n "$SSH_KNOWN_HOSTS" ]; then
-            printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          else
-            echo "::warning title=Host key not pinned::Add SSH_KNOWN_HOSTS so the server identity is verified"
-            ssh-keyscan -p "$port" -T 15 "$SSH_HOST" > ~/.ssh/known_hosts 2>/dev/null
-          fi
-          chmod 600 ~/.ssh/known_hosts
-          {
-            echo "Host server"
-            echo "  HostName $SSH_HOST"
-            echo "  User $SSH_USER"
-            echo "  Port $port"
-            echo "  IdentityFile ~/.ssh/deploy_key"
-            echo "  IdentitiesOnly yes"
-            echo "  StrictHostKeyChecking yes"
-            echo "  BatchMode yes"
-            echo "  ConnectTimeout 20"
-            echo "  ServerAliveInterval 15"
-          } > ~/.ssh/config
-          chmod 600 ~/.ssh/config
+        run: bash scripts/deploy/setup_ssh.sh
 
       - name: Server check (read-only)
         run: |
           ssh server "APP_ROOT='${APP_ROOT}' APP_VENV='${APP_VENV}' bash -s" < scripts/deploy/remote_check.sh
-
-      - name: Locate unpushed code (read-only, temporary)
-        if: env.MODE == 'test'
-        run: ssh server "bash -s" < scripts/deploy/locate_code.sh
 
       - name: Diagnose SSH failure
         if: failure()
@@ -175,3 +143,85 @@ jobs:
       - name: Remove key
         if: always()
         run: rm -f ~/.ssh/deploy_key
+
+  # One-time import of the release that exists only on the server into a new branch.
+  # Triggered by a push to ops/deploy-pipeline whose commit message contains [import-release].
+  import-release:
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[import-release]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      APP_ROOT: ${{ vars.APP_ROOT }}
+      IMPORT_BRANCH: import/release-3.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_KEY_PASSPHRASE: ${{ secrets.SSH_KEY_PASSPHRASE }}
+        run: bash scripts/deploy/setup_ssh.sh
+
+      - name: Package source on server (secret scan against live settings)
+        run: ssh server "APP_ROOT='${APP_ROOT}' bash -s" < scripts/deploy/export_release.sh
+
+      - name: Download package
+        run: |
+          ssh server 'cat ~/.marketingiq/export/release.tgz' > "$RUNNER_TEMP/release.tgz"
+          ssh server 'rm -f ~/.marketingiq/export/release.tgz'
+          mkdir -p "$RUNNER_TEMP/release"
+          tar -xzf "$RUNNER_TEMP/release.tgz" -C "$RUNNER_TEMP/release"
+
+      - name: Second secret scan
+        run: python3 scripts/deploy/scan_secrets.py "$RUNNER_TEMP/release"
+
+      - name: Commit onto main as a new branch
+        run: |
+          if git ls-remote --exit-code --heads origin "$IMPORT_BRANCH" >/dev/null; then
+            echo "::error::Branch $IMPORT_BRANCH already exists; delete it first to re-import"
+            exit 1
+          fi
+          git worktree add -q -b "$IMPORT_BRANCH" "$RUNNER_TEMP/import" origin/main
+          cp -a "$RUNNER_TEMP/release/." "$RUNNER_TEMP/import/"
+          cd "$RUNNER_TEMP/import"
+          (cd "$RUNNER_TEMP/release" && find . -type f | sed 's#^\./##' | sort) > "$RUNNER_TEMP/server_files"
+          git ls-files | grep -v '^\.github/' | sort > "$RUNNER_TEMP/main_files"
+          only_main=$(comm -23 "$RUNNER_TEMP/main_files" "$RUNNER_TEMP/server_files" | tr '\n' ' ')
+          git add -A
+          added=$(git diff --cached --name-only --diff-filter=A | wc -l | tr -d ' ')
+          modified=$(git diff --cached --name-only --diff-filter=M | wc -l | tr -d ' ')
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q -F - <<MSG
+          import: release 3.1 as deployed on the shared-hosting server
+
+          Source copied from the live cPanel application folder, which contained
+          work that was never pushed to GitHub (login throttling, company
+          discovery policies, decision makers, web UI and more). Based on main
+          so the diff shows exactly what the server adds.
+
+          Excluded: caches, zips, logs, .htaccess, cPanel passenger_wsgi.py,
+          env files and other server-only artifacts. Secret scans: live cPanel
+          settings values (server side) and token patterns (runner side).
+
+          Files in main but not on the server (kept unchanged): ${only_main:-none}
+
+          Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+          Claude-Session: https://claude.ai/code/session_01X6WP9SgYdrQG8bLD8Lt6ye
+          MSG
+          git push -q origin "$IMPORT_BRANCH"
+          echo "::notice title=Imported::$IMPORT_BRANCH at $(git rev-parse --short HEAD): $added added, $modified modified. In main only: ${only_main:-none}"
+
+      - name: Remove key
+        if: always()
+        run: |
+          rm -f ~/.ssh/deploy_key
+          ssh server 'rm -f ~/.marketingiq/export/release.tgz' 2>/dev/null || true
