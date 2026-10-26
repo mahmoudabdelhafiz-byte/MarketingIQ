@@ -6,7 +6,6 @@ from a2wsgi import ASGIMiddleware
 
 from marketingiq.api.production import create_production_app
 
-
 # Validate production configuration when Passenger loads the application,
 # but delay construction of the ASGI->WSGI event-loop adapter until the
 # worker handles its first request.
