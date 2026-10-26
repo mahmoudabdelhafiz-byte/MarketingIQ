@@ -111,6 +111,33 @@ SELECT VERSION();
 The current hosted CI migration chain is validated on MySQL 8.0.46. A MariaDB server may be
 protocol-compatible through PyMySQL but must be validated separately before production migration.
 
+## First administrator
+
+After `alembic upgrade head` succeeds, create the first organization administrator from the cPanel
+Terminal inside the application's virtual environment:
+
+```bash
+MARKETINGIQ_ADMIN_PASSWORD='<at-least-12-characters>' \
+  python -m marketingiq.jobs.create_admin --email you@example.com \
+  --org-name "Barmageyat" --org-slug barmageyat
+```
+
+Then sign in at `https://marketingiq.barmageyat.net/`.
+
+## Scheduled jobs (cron)
+
+Automation only runs when cPanel **Cron Jobs** call the job modules. Cron does not see the
+`SetEnv` values from `.htaccess`, so each line loads them first. Replace the paths if your
+application root differs:
+
+```bash
+*/15 * * * * cd /home/<cpanel-user>/<application-root> && . /home/<cpanel-user>/virtualenv/<application-root>/3.12/bin/activate && eval "$(python -m marketingiq.jobs.print_htaccess_env)" && python -m marketingiq.jobs.run_company_discovery >> /home/<cpanel-user>/logs/miq-discovery.log 2>&1
+*/15 * * * * cd /home/<cpanel-user>/<application-root> && . /home/<cpanel-user>/virtualenv/<application-root>/3.12/bin/activate && eval "$(python -m marketingiq.jobs.print_htaccess_env)" && python -m marketingiq.jobs.run_automation_policies >> /home/<cpanel-user>/logs/miq-automation.log 2>&1
+```
+
+Each job only acts on rules that are due, so a 15-minute cron interval is safe; the jobs take a
+database lock so overlapping runs are skipped.
+
 ## Verification
 
 After cPanel reports the application as started and the database schema is current, verify:
@@ -120,7 +147,8 @@ https://marketingiq.barmageyat.net/health/live
 https://marketingiq.barmageyat.net/health/ready
 ```
 
-Both should return HTTP 200. Production `/docs` should return 404.
+Both should return HTTP 200, and `/` should load the sign-in page. Production `/docs` should
+return 404.
 
 The production security headers should still be present through Passenger because they are emitted
 by the underlying FastAPI application.

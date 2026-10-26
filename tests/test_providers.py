@@ -106,12 +106,12 @@ def test_hunter_maps_company_fields_and_never_returns_secret():
             headers={"x-request-id": "safe-123"},
             json={
                 "data": {
-                    "organization": {
-                        "description": "Widgets",
-                        "industry": "Manufacturing",
-                        "location": "Cairo",
-                        "company_size": "51-200",
-                    }
+                    "name": "Acme",
+                    "description": "Widgets",
+                    "category": {"sector": "Industrials", "industry": "Manufacturing"},
+                    "geo": {"country": "Egypt", "countryCode": "eg", "city": "Cairo"},
+                    "location": "Cairo, Egypt",
+                    "metrics": {"employees": "51-200", "employeesCount": 120},
                 }
             },
         )
@@ -120,13 +120,32 @@ def test_hunter_maps_company_fields_and_never_returns_secret():
     result = provider.enrich_company("acme.test")
     assert result.classification == DataClassification.THIRD_PARTY_LICENSED
     assert result.redistribution_status == RedistributionStatus.UNKNOWN
-    assert {fact.key for fact in result.facts} == {
-        "company_description",
-        "industry",
-        "headquarters",
-        "employee_range",
+    facts = {fact.key: fact.value for fact in result.facts}
+    assert facts == {
+        "company_description": "Widgets",
+        "industry": "Manufacturing",
+        "country": "EG",
+        "headquarters": "Cairo, Egypt",
+        "employee_range": "51-200",
+        "employee_count": 120,
     }
     assert secret not in repr(result)
+
+
+def test_hunter_enrichment_uses_company_endpoint_and_tolerates_other_shapes():
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.path)
+        if "unknown" in request.url.params["domain"]:
+            return httpx.Response(404, json={"errors": [{"id": "not_found"}]})
+        # Domain-Search-like shape (organization is a plain string) must not crash.
+        return httpx.Response(200, json={"data": {"organization": "Acme", "emails": []}})
+
+    provider = HunterProvider("k", httpx.Client(transport=httpx.MockTransport(handler)))
+    assert provider.enrich_company("unknown.test").facts == ()
+    assert provider.enrich_company("acme.test").facts == ()
+    assert seen == ["/v2/companies/find", "/v2/companies/find"]
 
 
 def test_hunter_rate_limit_is_categorized():

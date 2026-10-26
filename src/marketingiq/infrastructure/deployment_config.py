@@ -149,6 +149,14 @@ def validate_deployment_environment(
         smtp_starttls = _validate_bool(values, errors, "SMTP_STARTTLS", default=True)
         if smtp_ssl is True and smtp_starttls is True:
             errors.append("SMTP_USE_SSL and SMTP_STARTTLS cannot both be true")
+        public_url = values.get("MARKETINGIQ_PUBLIC_URL", "").strip()
+        if not public_url:
+            errors.append(
+                "MARKETINGIQ_PUBLIC_URL is required when SMTP is enabled "
+                "so outbound email can carry an unsubscribe link"
+            )
+        elif not public_url.startswith("https://") or len(public_url) <= len("https://"):
+            errors.append("MARKETINGIQ_PUBLIC_URL must be an absolute https:// URL")
 
     imap_enabled = _any_value(values, "IMAP_HOST", "IMAP_USERNAME", "IMAP_PASSWORD")
     if imap_enabled:

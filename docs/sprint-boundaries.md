@@ -1,5 +1,12 @@
 # Sprint boundaries
 
+> **Status (September 2026):** the items listed as deferred in the Sprint 1 and stabilization
+> sections below have since been delivered: providers and research, fit scoring, qualification,
+> contact discovery, AI-assisted campaigns, human review, outbound sending with unsubscribe,
+> engagement tracking, pipeline, learning, automation policies, cPanel production deployment and an
+> operator web interface. See the README for the current scope. The sections below are kept as
+> historical record.
+
 ## Sprint 1 foundation included
 
 Relational tenancy and RBAC foundations, tenant/global company separation, product and versioned

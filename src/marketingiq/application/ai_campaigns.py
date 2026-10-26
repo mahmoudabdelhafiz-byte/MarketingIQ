@@ -11,6 +11,7 @@ from marketingiq.application.campaigns import (
     DEFAULT_CTA,
     CampaignDraftService,
 )
+from marketingiq.application.decision_makers import targeting_block_reason
 from marketingiq.application.errors import ConflictError, NotFoundError
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.campaign_ai import (
@@ -70,6 +71,9 @@ class GroundedAICampaignService:
             raise ConflictError("CAMPAIGN_DRAFT_VALUE_PROPOSITION_REQUIRED")
         if contact.buyer_role_match not in ALIGNED_ROLE_MATCHES:
             raise ConflictError("CAMPAIGN_DRAFT_BUYER_ROLE_ALIGNMENT_REQUIRED")
+        blocked = targeting_block_reason(contact)
+        if blocked:
+            raise ConflictError(f"CAMPAIGN_DRAFT_{blocked}")
         if not self.base._has_verified_email(contact.id):
             raise ConflictError("CAMPAIGN_DRAFT_VERIFIED_EMAIL_REQUIRED")
 

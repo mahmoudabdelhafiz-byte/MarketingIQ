@@ -179,3 +179,24 @@ def test_database_restore_test_date_must_use_iso_date():
 
     assert report.ok is False
     assert "DATABASE_RESTORE_TEST_DATE must use YYYY-MM-DD" in report.errors
+
+
+def test_smtp_requires_https_public_url_for_unsubscribe_links():
+    smtp = {
+        **_valid_env(),
+        "SMTP_HOST": "mail.example.com",
+        "SMTP_FROM_EMAIL": "marketing@example.com",
+    }
+
+    missing = validate_deployment_environment(smtp)
+    insecure = validate_deployment_environment(
+        {**smtp, "MARKETINGIQ_PUBLIC_URL": "http://marketingiq.example.com"}
+    )
+    valid = validate_deployment_environment(
+        {**smtp, "MARKETINGIQ_PUBLIC_URL": "https://marketingiq.example.com"}
+    )
+
+    assert any("MARKETINGIQ_PUBLIC_URL is required" in error for error in missing.errors)
+    assert "MARKETINGIQ_PUBLIC_URL must be an absolute https:// URL" in insecure.errors
+    assert valid.ok is True
+    assert valid.integrations["smtp"] is True

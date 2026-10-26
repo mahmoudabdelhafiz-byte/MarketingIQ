@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from marketingiq.application.authorization import Permission, require_permission
 from marketingiq.application.contacts import ContactDiscoveryService
+from marketingiq.application.decision_makers import DecisionMakerService
 from marketingiq.application.errors import ConflictError, NotFoundError
 from marketingiq.application.fit import FitAssessmentService
 from marketingiq.application.fit_freshness import FitAssessmentFreshnessService
@@ -52,11 +53,25 @@ class AutomationOrchestrationService:
         session: Session,
         tenant: TenantContext,
         provider_registry: ProviderRegistry,
+        decision_maker_factory=None,
     ) -> None:
         self.session = session
         self.tenant = tenant
         self.provider_registry = provider_registry
         self.freshness = FitAssessmentFreshnessService(session, tenant)
+        self._decision_maker_factory = decision_maker_factory
+
+    def _decision_makers(self) -> DecisionMakerService:
+        if self._decision_maker_factory is not None:
+            return self._decision_maker_factory(self.session, self.tenant)
+        return DecisionMakerService(self.session, self.tenant, self.provider_registry)
+
+    def _persona_mode(self, product_id: str) -> bool:
+        """Products with configured personas use evidence-based decision-maker discovery."""
+
+        return DecisionMakerService(
+            self.session, self.tenant, self.provider_registry, ai_client=None, page_scanner=None
+        ).has_configured_personas(product_id)
 
     def plan(self, relationship_id: str, product_id: str) -> dict[str, Any]:
         require_permission(self.tenant, Permission.READ)
@@ -72,9 +87,16 @@ class AutomationOrchestrationService:
             product.id,
             assessment.id if assessment and assessment_freshness["is_current"] else None,
         )
-        contact_count = (
-            self._contact_count(relationship.id, qualification.id) if qualification else 0
-        )
+        persona_mode = self._persona_mode(product.id)
+        if persona_mode:
+            # Only people who passed the evidence checks and have a verified email count.
+            contact_count = (
+                self._ready_count(relationship.id, qualification.id) if qualification else 0
+            )
+        else:
+            contact_count = (
+                self._contact_count(relationship.id, qualification.id) if qualification else 0
+            )
 
         steps: list[dict[str, Any]] = []
         needs_research = assessment is None or not assessment_freshness["is_current"]
@@ -125,20 +147,56 @@ class AutomationOrchestrationService:
             qualification is not None
             and qualification.status in ACTIONABLE_QUALIFICATION_STATUSES
         )
-        steps.append(
-            self._step(
-                OrchestrationStep.DISCOVER_CONTACTS,
-                "READY"
-                if actionable and contact_count == 0
-                else "DONE"
-                if actionable and contact_count > 0
-                else "BLOCKED",
-                "Find contacts aligned to the recommended buyer role"
-                if actionable
-                else "An actionable current qualification is required first",
-                requires_provider_credits=True,
+        decision_maker_run = None
+        if persona_mode:
+            decision_maker_run = (
+                self._recent_decision_maker_run(relationship.id, product.id, qualification.id)
+                if qualification
+                else None
             )
-        )
+            if not actionable:
+                status, reason = "BLOCKED", "An actionable current qualification is required first"
+            elif contact_count > 0:
+                status, reason = "DONE", "A qualified decision-maker with a verified email exists"
+            elif decision_maker_run is not None:
+                status = "BLOCKED"
+                reason = (
+                    f"Last decision-maker search: {decision_maker_run.get('outcome')}. "
+                    "Review the people found, allow provider credits, or refresh the search."
+                )
+            else:
+                status = "READY"
+                reason = "Find decision-makers for the product's personas (public sources first)"
+            steps.append(
+                self._step(
+                    OrchestrationStep.DISCOVER_CONTACTS,
+                    status,
+                    reason,
+                    requires_provider_credits=False,
+                )
+            )
+            # A public-only search can be repeated once provider credits are allowed.
+            steps[-1]["credit_retry_available"] = bool(
+                status == "BLOCKED"
+                and actionable
+                and decision_maker_run is not None
+                and not decision_maker_run.get("credits_allowed")
+            )
+        else:
+            steps.append(
+                self._step(
+                    OrchestrationStep.DISCOVER_CONTACTS,
+                    "READY"
+                    if actionable and contact_count == 0
+                    else "DONE"
+                    if actionable and contact_count > 0
+                    else "BLOCKED",
+                    "Find contacts aligned to the recommended buyer role"
+                    if actionable
+                    else "An actionable current qualification is required first",
+                    requires_provider_credits=True,
+                )
+            )
 
         next_step = next(
             (item["step"] for item in steps if item["status"] == "READY"), None
@@ -160,6 +218,10 @@ class AutomationOrchestrationService:
             "latest_qualification_id": qualification.id if qualification else None,
             "qualification_status": qualification.status.value if qualification else None,
             "contact_count": contact_count,
+            "contact_mode": "DECISION_MAKERS" if persona_mode else "LEGACY",
+            "decision_maker_outcome": decision_maker_run.get("outcome")
+            if decision_maker_run
+            else None,
             "state": state,
             "next_step": next_step,
             "steps": steps,
@@ -206,6 +268,20 @@ class AutomationOrchestrationService:
                 relationship_id, assessment.id
             )
             result_id = result.id
+        elif step == OrchestrationStep.DISCOVER_CONTACTS and self._persona_mode(product_id):
+            qualification = self._latest_qualification(relationship_id, product_id, None)
+            if (
+                qualification is None
+                or qualification.status not in ACTIONABLE_QUALIFICATION_STATUSES
+            ):
+                raise ConflictError("ORCHESTRATION_ACTIONABLE_QUALIFICATION_REQUIRED")
+            self._decision_makers().discover(
+                relationship_id,
+                product_id,
+                allow_provider_credits=allow_provider_credits,
+                force_refresh=False,
+            )
+            result_id = qualification.id
         elif step == OrchestrationStep.DISCOVER_CONTACTS:
             if not allow_provider_credits:
                 raise ConflictError("ORCHESTRATION_PROVIDER_CREDIT_APPROVAL_REQUIRED")
@@ -283,7 +359,11 @@ class AutomationOrchestrationService:
                 (
                     item
                     for item in current["steps"]
-                    if item["status"] == "READY" and item["step"] not in executed_names
+                    if (
+                        item["status"] == "READY"
+                        or (allow_provider_credits and item.get("credit_retry_available"))
+                    )
+                    and item["step"] not in executed_names
                 ),
                 None,
             )
@@ -292,7 +372,11 @@ class AutomationOrchestrationService:
                 break
 
             step = OrchestrationStep(next_item["step"])
-            if step == OrchestrationStep.DISCOVER_CONTACTS and not allow_provider_credits:
+            if (
+                step == OrchestrationStep.DISCOVER_CONTACTS
+                and not allow_provider_credits
+                and not current.get("contact_mode") == "DECISION_MAKERS"
+            ):
                 stop_reason = "PROVIDER_CREDIT_APPROVAL_REQUIRED"
                 break
 
@@ -312,6 +396,12 @@ class AutomationOrchestrationService:
         final_plan = self.plan(relationship_id, product_id)
         if final_plan["state"] == "READY_FOR_HUMAN_CAMPAIGN_REVIEW":
             stop_reason = "HUMAN_CAMPAIGN_GATE"
+        elif (
+            final_plan.get("contact_mode") == "DECISION_MAKERS"
+            and OrchestrationStep.DISCOVER_CONTACTS.value in executed_names
+        ):
+            outcome = final_plan.get("decision_maker_outcome") or "PENDING"
+            stop_reason = f"DECISION_MAKERS_{outcome}"
 
         self.session.add(
             AuditLog(
@@ -414,6 +504,43 @@ class AutomationOrchestrationService:
         return self.session.scalar(
             query.order_by(LeadQualification.qualified_at.desc(), LeadQualification.id.desc())
         )
+
+    def _ready_count(self, relationship_id: str, qualification_id: str) -> int:
+        return int(
+            self.session.scalar(
+                select(func.count(ContactCandidate.id)).where(
+                    ContactCandidate.organization_id == self.tenant.organization_id,
+                    ContactCandidate.organization_company_id == relationship_id,
+                    ContactCandidate.qualification_id == qualification_id,
+                    ContactCandidate.contact_status == "READY_FOR_DRAFT",
+                )
+            )
+            or 0
+        )
+
+    def _recent_decision_maker_run(
+        self, relationship_id: str, product_id: str, qualification_id: str
+    ):
+        """The run that should stop automatic repeats for this qualification, if any.
+
+        A run that was allowed to spend credits is final for the qualification: automation never
+        buys the same search again (a user can press Refresh). A free public-only run is repeated
+        only after the search freshness window.
+        """
+
+        service = DecisionMakerService(
+            self.session, self.tenant, self.provider_registry, ai_client=None, page_scanner=None
+        )
+        last = service.last_run(relationship_id, product_id)
+        if last is None or last.get("at") is None:
+            return None
+        if last.get("qualification_id") != qualification_id:
+            return None
+        if last.get("credits_allowed"):
+            return last
+        if last["at"] < service.now - service.contacts.search_ttl:
+            return None
+        return last
 
     def _contact_count(self, relationship_id: str, qualification_id: str) -> int:
         return int(
