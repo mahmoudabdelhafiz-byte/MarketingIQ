@@ -129,7 +129,7 @@ def _record_spend(
     result: DiscoveryResult,
     now: datetime,
 ) -> None:
-    usage = {k: v for k, v in (result.usage or {}).items() if isinstance(v, (int, str))}
+    usage = {k: v for k, v in (result.usage or {}).items() if isinstance(v, int | str)}
     session.add(
         AuditLog(
             organization_id=organization_id,
