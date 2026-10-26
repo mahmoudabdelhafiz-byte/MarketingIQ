@@ -119,34 +119,46 @@ def _check_budget(
         raise DiscoveryDailyLimitReached("Daily AI discovery search limit reached")
 
 
-def _record_spend(
+def _start_spend(
     session: Session,
     *,
     organization_id: str,
     actor_user_id: str | None,
     entity_id: str,
     context: str,
-    result: DiscoveryResult,
+    provider: CompanyDiscoveryProvider,
     now: datetime,
-) -> None:
-    usage = {k: v for k, v in (result.usage or {}).items() if isinstance(v, int | str)}
-    session.add(
-        AuditLog(
-            organization_id=organization_id,
-            actor_user_id=actor_user_id,
-            action=AI_SEARCH_ACTION,
-            entity_type="company_discovery",
-            entity_id=entity_id,
-            metadata_json={
-                "context": context,
-                "source": result.provider_key,
-                "companies": len(result.companies),
-                **usage,
-            },
-            created_at=now,
-        )
+) -> AuditLog | None:
+    """Count a paid search before it starts, so failed or partial searches use budget too."""
+
+    if not _costs_credits(provider):
+        return None
+    if not provider.configured:
+        raise ProviderNotConfigured("AI discovery source is not configured")
+    entry = AuditLog(
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action=AI_SEARCH_ACTION,
+        entity_type="company_discovery",
+        entity_id=entity_id,
+        metadata_json={"context": context, "source": provider.key, "status": "started"},
+        created_at=now,
     )
+    session.add(entry)
     session.flush()
+    return entry
+
+
+def _finish_spend(entry: AuditLog | None, result: DiscoveryResult) -> None:
+    if entry is None:
+        return
+    usage = {k: v for k, v in (result.usage or {}).items() if isinstance(v, int | str)}
+    entry.metadata_json = {
+        **(entry.metadata_json or {}),
+        "status": "completed",
+        "companies": len(result.companies),
+        **usage,
+    }
 
 
 def _tenant_domains(session: Session, organization_id: str) -> tuple[str, ...]:
@@ -316,19 +328,19 @@ class CompanyDiscoveryService:
         source = self._source(provider_key)
         organization_id = self.tenant.organization_id
         _check_budget(self.session, organization_id, source, self.now)
+        spend = _start_spend(
+            self.session,
+            organization_id=organization_id,
+            actor_user_id=self.tenant.actor_user_id,
+            entity_id=organization_id,
+            context="preview",
+            provider=source,
+            now=self.now,
+        )
         result, notes = _discover(
             source, criteria, 0, exclude_domains=_tenant_domains(self.session, organization_id)
         )
-        if _costs_credits(source):
-            _record_spend(
-                self.session,
-                organization_id=organization_id,
-                actor_user_id=self.tenant.actor_user_id,
-                entity_id=organization_id,
-                context="preview",
-                result=result,
-                now=self.now,
-            )
+        _finish_spend(spend, result)
         known = _known_domains(self.session, organization_id, result.companies)
         return {
             "provider_key": result.provider_key,
@@ -694,8 +706,18 @@ class CompanyDiscoveryExecutor:
             self._fail(policy, run, "DISCOVERY_RUN_AS_PERMISSION_DENIED")
             return self._finish(policy, run)
 
+        spend = None
         try:
             _check_budget(self.session, policy.organization_id, source, self.now)
+            spend = _start_spend(
+                self.session,
+                organization_id=policy.organization_id,
+                actor_user_id=run.triggered_by_user_id or policy.run_as_user_id,
+                entity_id=policy.id,
+                context="rule",
+                provider=source,
+                now=self.now,
+            )
             result, notes = _discover(
                 source,
                 policy.criteria(),
@@ -712,16 +734,7 @@ class CompanyDiscoveryExecutor:
             self._fail(policy, run, "DISCOVERY_INVALID_CRITERIA")
             return self._finish(policy, run)
 
-        if _costs_credits(source):
-            _record_spend(
-                self.session,
-                organization_id=policy.organization_id,
-                actor_user_id=run.triggered_by_user_id or policy.run_as_user_id,
-                entity_id=policy.id,
-                context="rule",
-                result=result,
-                now=self.now,
-            )
+        _finish_spend(spend, result)
         if any("pagination" in note.lower() for note in notes):
             policy.next_offset = 0
         added, known, invalid = _attach_new(

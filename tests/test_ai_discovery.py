@@ -160,6 +160,7 @@ def test_ai_preview_passes_exclusions_returns_evidence_and_records_spend(session
     assert "dropped" in preview["notes"][0]
     [row] = spend_rows(session)
     assert row.metadata_json["context"] == "preview"
+    assert row.metadata_json["status"] == "completed"
     assert row.metadata_json["searches"] == 4 and row.metadata_json["model"] == "claude-test"
     assert "portalpha" not in json.dumps(row.metadata_json)
 
@@ -400,3 +401,29 @@ def test_normalize_source_url():
     assert normalize_source_url("http://WWW.Example.com/a/") == "https://example.com/a"
     assert normalize_source_url("ftp://example.com") is None
     assert normalize_source_url("https://u:p@example.com/") is None
+
+
+def test_failed_ai_search_still_counts_toward_the_daily_limit(session, monkeypatch):
+    monkeypatch.setenv("DISCOVERY_AI_DAILY_LIMIT", "1")
+    seeded = seed(session)
+    ai = FakeAI()
+
+    def failing(*_args, **_kwargs):
+        raise AIDiscoveryError("MALFORMED_RESPONSE")
+
+    ai.discover = failing
+    with pytest.raises(AIDiscoveryError):
+        service(session, seeded, FakeHunter(), ai).preview(CRITERIA, provider_key=KEY)
+    [row] = spend_rows(session)
+    assert row.metadata_json["status"] == "started"
+    with pytest.raises(DiscoveryDailyLimitReached):
+        service(session, seeded, FakeHunter(), ai).preview(CRITERIA, provider_key=KEY)
+
+
+def test_unconfigured_ai_source_does_not_use_budget(session):
+    seeded = seed(session)
+    with pytest.raises(ProviderNotConfigured):
+        service(session, seeded, FakeHunter(), FakeAI(configured=False)).preview(
+            CRITERIA, provider_key=KEY
+        )
+    assert spend_rows(session) == []
