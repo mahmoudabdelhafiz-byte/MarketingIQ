@@ -485,6 +485,7 @@ def test_discovery_api_ai_source_selection_and_daily_limit(tmp_path, monkeypatch
     )
     assert limited.status_code == 409
     assert limited.json()["code"] == "DAILY_LIMIT"
+    assert "limit is used up" in limited.json()["detail"]
     unknown = client.post(
         base + "/preview", json={"countries": ["SA"], "provider_key": "BING"}, headers=headers
     )
