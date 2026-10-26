@@ -10,6 +10,8 @@ import os
 
 from marketingiq.application.discovery import CompanyDiscoveryExecutor
 from marketingiq.application.research import ProviderRegistry
+from marketingiq.infrastructure.ai_discovery import KEY as AI_SOURCE_KEY
+from marketingiq.infrastructure.ai_discovery import build_ai_discovery_provider
 from marketingiq.infrastructure.database import create_database_engine, create_session_factory
 from marketingiq.infrastructure.discovery import HunterDiscoveryProvider
 from marketingiq.infrastructure.job_lock import mysql_job_lock
@@ -33,7 +35,10 @@ def main() -> None:
         with sessions() as session:
             try:
                 runs = CompanyDiscoveryExecutor(
-                    session, HunterDiscoveryProvider(), registry
+                    session,
+                    HunterDiscoveryProvider(),
+                    registry,
+                    extra_providers={AI_SOURCE_KEY: build_ai_discovery_provider()},
                 ).run_due(limit=limit)
                 session.commit()
             except Exception:

@@ -11,7 +11,11 @@ from sqlalchemy.orm import Session
 from marketingiq.application.discovery import CompanyDiscoveryService, normalize_criteria
 from marketingiq.application.research import ProviderRegistry
 from marketingiq.application.tenant import TenantContext
+from marketingiq.infrastructure.ai_discovery import KEY as AI_SOURCE_KEY
+from marketingiq.infrastructure.ai_discovery import build_ai_discovery_provider
 from marketingiq.infrastructure.discovery import HunterDiscoveryProvider
+
+SOURCE_PATTERN = r"^[A-Za-z_]{2,50}$"
 
 
 class DiscoveryCriteriaRequest(BaseModel):
@@ -20,6 +24,10 @@ class DiscoveryCriteriaRequest(BaseModel):
     industries: list[str] = Field(default_factory=list, max_length=25)
     keywords: list[str] = Field(default_factory=list, max_length=25)
     headcounts: list[str] = Field(default_factory=list, max_length=8)
+
+
+class DiscoveryPreviewRequest(DiscoveryCriteriaRequest):
+    provider_key: str | None = Field(default=None, pattern=SOURCE_PATTERN)
 
 
 class DiscoveredCompanyRequest(BaseModel):
@@ -33,6 +41,7 @@ class DiscoveryAddRequest(BaseModel):
 
 class DiscoveryPolicyCreateRequest(DiscoveryCriteriaRequest):
     product_id: str = Field(min_length=1, max_length=36)
+    provider_key: str | None = Field(default=None, pattern=SOURCE_PATTERN)
     name: str | None = Field(default=None, max_length=200)
     max_new_per_run: int = Field(default=20, ge=1, le=100)
     cadence_minutes: int = Field(default=1440, ge=60, le=43200)
@@ -44,6 +53,7 @@ class DiscoveryPolicyCreateRequest(DiscoveryCriteriaRequest):
 
 class DiscoveryPolicyUpdateRequest(BaseModel):
     name: str | None = Field(default=None, max_length=200)
+    provider_key: str | None = Field(default=None, pattern=SOURCE_PATTERN)
     query: str | None = Field(default=None, max_length=500)
     countries: list[str] | None = Field(default=None, max_length=25)
     industries: list[str] | None = Field(default=None, max_length=25)
@@ -66,13 +76,19 @@ def register_discovery_routes(
 ) -> None:
     if not hasattr(app.state, "discovery_provider"):
         app.state.discovery_provider = HunterDiscoveryProvider()
+    if not hasattr(app.state, "extra_discovery_providers"):
+        app.state.extra_discovery_providers = {AI_SOURCE_KEY: build_ai_discovery_provider()}
 
     def discovery_service(
         context: TenantContext = Depends(tenant_dependency),
         db: Session = Depends(session_dependency),
     ) -> CompanyDiscoveryService:
         return CompanyDiscoveryService(
-            db, context, app.state.discovery_provider, provider_registry_getter()
+            db,
+            context,
+            app.state.discovery_provider,
+            provider_registry_getter(),
+            extra_providers=app.state.extra_discovery_providers,
         )
 
     base = prefix + "/company-discovery"
@@ -81,12 +97,17 @@ def register_discovery_routes(
     def suggest(product_id: str, svc: CompanyDiscoveryService = Depends(discovery_service)):
         return svc.suggest_criteria(product_id)
 
+    @app.get(base + "/sources")
+    def sources(svc: CompanyDiscoveryService = Depends(discovery_service)):
+        return svc.sources()
+
     @app.post(base + "/preview")
     def preview(
-        body: DiscoveryCriteriaRequest,
+        body: DiscoveryPreviewRequest,
         svc: CompanyDiscoveryService = Depends(discovery_service),
     ):
-        return svc.preview(normalize_criteria(**body.model_dump()))
+        criteria = normalize_criteria(**body.model_dump(exclude={"provider_key"}))
+        return svc.preview(criteria, provider_key=body.provider_key)
 
     @app.post(base + "/add", status_code=201)
     def add(body: DiscoveryAddRequest, svc: CompanyDiscoveryService = Depends(discovery_service)):

@@ -8,11 +8,13 @@ email; those remain human actions.
 
 from __future__ import annotations
 
+import os
 import re
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -49,6 +51,8 @@ from marketingiq.domain.models import (
 from marketingiq.domain.providers import ProviderError, ProviderNotConfigured
 
 DISCOVERED_LIFECYCLE = "discovered"
+AI_SEARCH_ACTION = "company_discovery.ai_search"
+MAX_EXCLUDED_DOMAINS = 200
 MIN_CADENCE_MINUTES = 60
 MAX_CADENCE_MINUTES = 43200
 MAX_LIST_ITEMS = 25
@@ -63,6 +67,100 @@ _BUCKET_BOUNDS = (
     ("5001-10000", 5001, 10000),
     ("10001+", 10001, None),
 )
+
+
+class DiscoveryDailyLimitReached(ProviderError):
+    category = "DAILY_LIMIT"
+
+
+def ai_daily_limit() -> int:
+    try:
+        return max(1, int(os.environ.get("DISCOVERY_AI_DAILY_LIMIT", "10")))
+    except ValueError:
+        return 10
+
+
+def _provider_map(
+    primary: CompanyDiscoveryProvider, extra: Mapping[str, CompanyDiscoveryProvider] | None
+) -> dict[str, CompanyDiscoveryProvider]:
+    providers = {primary.key: primary}
+    for key, provider in (extra or {}).items():
+        providers.setdefault(key, provider)
+    return providers
+
+
+def _costs_credits(provider: CompanyDiscoveryProvider) -> bool:
+    return bool(getattr(provider, "costs_credits", False))
+
+
+def _day_start(now: datetime) -> datetime:
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _paid_searches_today(session: Session, organization_id: str, now: datetime) -> int:
+    return int(
+        session.scalar(
+            select(func.count(AuditLog.id)).where(
+                AuditLog.organization_id == organization_id,
+                AuditLog.action == AI_SEARCH_ACTION,
+                AuditLog.created_at >= _day_start(now),
+            )
+        )
+        or 0
+    )
+
+
+def _check_budget(
+    session: Session, organization_id: str, provider: CompanyDiscoveryProvider, now: datetime
+) -> None:
+    if _costs_credits(provider) and _paid_searches_today(session, organization_id, now) >= (
+        ai_daily_limit()
+    ):
+        raise DiscoveryDailyLimitReached("Daily AI discovery search limit reached")
+
+
+def _record_spend(
+    session: Session,
+    *,
+    organization_id: str,
+    actor_user_id: str | None,
+    entity_id: str,
+    context: str,
+    result: DiscoveryResult,
+    now: datetime,
+) -> None:
+    usage = {k: v for k, v in (result.usage or {}).items() if isinstance(v, (int, str))}
+    session.add(
+        AuditLog(
+            organization_id=organization_id,
+            actor_user_id=actor_user_id,
+            action=AI_SEARCH_ACTION,
+            entity_type="company_discovery",
+            entity_id=entity_id,
+            metadata_json={
+                "context": context,
+                "source": result.provider_key,
+                "companies": len(result.companies),
+                **usage,
+            },
+            created_at=now,
+        )
+    )
+    session.flush()
+
+
+def _tenant_domains(session: Session, organization_id: str) -> tuple[str, ...]:
+    rows = session.scalars(
+        select(CompanyIdentifier.normalized_value)
+        .join(OrganizationCompany, OrganizationCompany.company_id == CompanyIdentifier.company_id)
+        .where(
+            OrganizationCompany.organization_id == organization_id,
+            CompanyIdentifier.kind == "DOMAIN",
+        )
+        .order_by(OrganizationCompany.created_at.desc())
+        .limit(MAX_EXCLUDED_DOMAINS)
+    )
+    return tuple(rows)
 
 
 def headcount_buckets(employee_min: int | None, employee_max: int | None) -> tuple[str, ...]:
@@ -129,12 +227,47 @@ class CompanyDiscoveryService:
         provider: CompanyDiscoveryProvider,
         provider_registry: ProviderRegistry,
         now: datetime | None = None,
+        extra_providers: Mapping[str, CompanyDiscoveryProvider] | None = None,
     ) -> None:
         self.session = session
         self.tenant = tenant
         self.provider = provider
+        self.providers = _provider_map(provider, extra_providers)
         self.provider_registry = provider_registry
         self.now = _as_utc(now or datetime.now(UTC))
+
+    # --- sources ----------------------------------------------------------------------
+
+    def sources(self) -> list[dict[str, Any]]:
+        require_permission(self.tenant, Permission.READ)
+        used = _paid_searches_today(self.session, self.tenant.organization_id, self.now)
+        output = []
+        for key, provider in self.providers.items():
+            status = provider.status() if hasattr(provider, "status") else {}
+            item = {
+                "key": key,
+                "label": getattr(provider, "label", "Hunter Discover" if key == "HUNTER" else key),
+                "configured": provider.configured,
+                "costs_credits": _costs_credits(provider),
+                "provider": status.get("provider"),
+                "model": status.get("model"),
+                "configuration_error": status.get("configuration_error"),
+            }
+            if _costs_credits(provider):
+                item["daily_limit"] = ai_daily_limit()
+                item["used_today"] = used
+            output.append(item)
+        return output
+
+    def _source(self, key: str | None) -> CompanyDiscoveryProvider:
+        if not key:
+            return self.provider
+        provider = self.providers.get(str(key).strip().upper())
+        if provider is None:
+            raise ValueError(f"Unknown discovery source: {key}")
+        if _costs_credits(provider):
+            require_permission(self.tenant, Permission.SPEND_PROVIDER_CREDITS)
+        return provider
 
     # --- criteria and on-demand discovery ---------------------------------------------
 
@@ -173,12 +306,30 @@ class CompanyDiscoveryService:
             "keywords": _clean_list(keywords),
             "headcounts": list(headcount_buckets(employee_min, employee_max)),
             "provider_configured": self.provider.configured,
+            "sources": self.sources(),
         }
 
-    def preview(self, criteria: DiscoveryCriteria) -> dict[str, Any]:
+    def preview(
+        self, criteria: DiscoveryCriteria, provider_key: str | None = None
+    ) -> dict[str, Any]:
         require_permission(self.tenant, Permission.IMPORT_COMPANIES)
-        result, notes = _discover(self.provider, criteria, 0)
-        known = _known_domains(self.session, self.tenant.organization_id, result.companies)
+        source = self._source(provider_key)
+        organization_id = self.tenant.organization_id
+        _check_budget(self.session, organization_id, source, self.now)
+        result, notes = _discover(
+            source, criteria, 0, exclude_domains=_tenant_domains(self.session, organization_id)
+        )
+        if _costs_credits(source):
+            _record_spend(
+                self.session,
+                organization_id=organization_id,
+                actor_user_id=self.tenant.actor_user_id,
+                entity_id=organization_id,
+                context="preview",
+                result=result,
+                now=self.now,
+            )
+        known = _known_domains(self.session, organization_id, result.companies)
         return {
             "provider_key": result.provider_key,
             "total_results": result.total_results,
@@ -188,6 +339,8 @@ class CompanyDiscoveryService:
                     "domain": item.domain,
                     "name": item.name,
                     "already_in_list": item.domain in known,
+                    "source_urls": list(item.source_urls),
+                    "rationale": item.rationale,
                 }
                 for item in result.companies
             ],
@@ -245,6 +398,7 @@ class CompanyDiscoveryService:
     def create(self, values: dict[str, Any]) -> CompanyDiscoveryPolicy:
         require_permission(self.tenant, Permission.MANAGE_AUTOMATION_POLICIES)
         product = self._product(str(values.get("product_id") or ""))
+        source = self._source(values.get("provider_key"))
         criteria = normalize_criteria(
             query=values.get("query"),
             countries=values.get("countries"),
@@ -258,7 +412,7 @@ class CompanyDiscoveryService:
             organization_id=self.tenant.organization_id,
             product_id=product.id,
             name=name[:200],
-            provider_key=self.provider.key,
+            provider_key=source.key,
             query=criteria.query,
             countries=list(criteria.countries),
             industries=list(criteria.industries),
@@ -291,10 +445,16 @@ class CompanyDiscoveryService:
             "run_workflow",
             "allow_provider_credits",
             "next_run_at",
+            "provider_key",
         }
         unknown = set(changes) - allowed
         if unknown:
             raise ValueError(f"Unsupported discovery fields: {', '.join(sorted(unknown))}")
+        if changes.get("provider_key"):
+            source = self._source(changes["provider_key"])
+            if source.key != policy.provider_key:
+                policy.provider_key = source.key
+                policy.next_offset = 0
         criteria_keys = {"query", "countries", "industries", "keywords", "headcounts"}
         if criteria_keys & set(changes):
             current = policy.criteria()
@@ -343,7 +503,11 @@ class CompanyDiscoveryService:
         require_permission(self.tenant, Permission.MANAGE_AUTOMATION_POLICIES)
         policy = self.get(policy_id)
         executor = CompanyDiscoveryExecutor(
-            self.session, self.provider, self.provider_registry, now=self.now
+            self.session,
+            self.provider,
+            self.provider_registry,
+            now=self.now,
+            extra_providers=self.providers,
         )
         run = executor.execute(
             policy,
@@ -427,6 +591,7 @@ class CompanyDiscoveryService:
                 "max_new_per_run": policy.max_new_per_run,
                 "run_workflow": policy.run_workflow,
                 "allow_provider_credits": policy.allow_provider_credits,
+                "provider_key": policy.provider_key,
             },
         )
 
@@ -440,9 +605,11 @@ class CompanyDiscoveryExecutor:
         provider: CompanyDiscoveryProvider,
         provider_registry: ProviderRegistry,
         now: datetime | None = None,
+        extra_providers: Mapping[str, CompanyDiscoveryProvider] | None = None,
     ) -> None:
         self.session = session
         self.provider = provider
+        self.providers = _provider_map(provider, extra_providers)
         self.provider_registry = provider_registry
         self.now = _as_utc(now or datetime.now(UTC))
 
@@ -518,13 +685,23 @@ class CompanyDiscoveryExecutor:
         if advance_schedule:
             policy.next_run_at = _next_run_after(scheduled_for, policy.cadence_minutes, self.now)
 
-        tenant = self._execution_tenant(policy)
+        source = self.providers.get((policy.provider_key or self.provider.key).upper())
+        if source is None:
+            self._fail(policy, run, "DISCOVERY_UNKNOWN_SOURCE")
+            return self._finish(policy, run)
+        tenant = self._execution_tenant(policy, source)
         if tenant is None:
             self._fail(policy, run, "DISCOVERY_RUN_AS_PERMISSION_DENIED")
             return self._finish(policy, run)
 
         try:
-            result, notes = _discover(self.provider, policy.criteria(), policy.next_offset or 0)
+            _check_budget(self.session, policy.organization_id, source, self.now)
+            result, notes = _discover(
+                source,
+                policy.criteria(),
+                policy.next_offset or 0,
+                exclude_domains=_tenant_domains(self.session, policy.organization_id),
+            )
         except ProviderNotConfigured:
             self._fail(policy, run, "DISCOVERY_PROVIDER_NOT_CONFIGURED")
             return self._finish(policy, run)
@@ -535,6 +712,16 @@ class CompanyDiscoveryExecutor:
             self._fail(policy, run, "DISCOVERY_INVALID_CRITERIA")
             return self._finish(policy, run)
 
+        if _costs_credits(source):
+            _record_spend(
+                self.session,
+                organization_id=policy.organization_id,
+                actor_user_id=run.triggered_by_user_id or policy.run_as_user_id,
+                entity_id=policy.id,
+                context="rule",
+                result=result,
+                now=self.now,
+            )
         if any("pagination" in note.lower() for note in notes):
             policy.next_offset = 0
         added, known, invalid = _attach_new(
@@ -584,7 +771,9 @@ class CompanyDiscoveryExecutor:
         policy.last_error_code = None
         return self._finish(policy, run)
 
-    def _execution_tenant(self, policy: CompanyDiscoveryPolicy) -> TenantContext | None:
+    def _execution_tenant(
+        self, policy: CompanyDiscoveryPolicy, source: CompanyDiscoveryProvider
+    ) -> TenantContext | None:
         user = self.session.get(User, policy.run_as_user_id)
         membership = self.session.scalar(
             select(OrganizationMembership).where(
@@ -601,7 +790,7 @@ class CompanyDiscoveryExecutor:
                 Permission.RUN_FIT_ASSESSMENT,
                 Permission.RUN_QUALIFICATION,
             }
-        if policy.allow_provider_credits:
+        if policy.allow_provider_credits or _costs_credits(source):
             required.add(Permission.SPEND_PROVIDER_CREDITS)
         if not required.issubset(ROLE_PERMISSIONS[membership.role]):
             return None
@@ -640,8 +829,15 @@ class CompanyDiscoveryExecutor:
 
 
 def _discover(
-    provider: CompanyDiscoveryProvider, criteria: DiscoveryCriteria, offset: int
+    provider: CompanyDiscoveryProvider,
+    criteria: DiscoveryCriteria,
+    offset: int,
+    *,
+    exclude_domains: tuple[str, ...] = (),
 ) -> tuple[DiscoveryResult, list[str]]:
+    if getattr(provider, "accepts_exclusions", False):
+        result = provider.discover(criteria, offset=offset, exclude_domains=exclude_domains)
+        return result, list(result.notes)
     # Imported lazily so the application layer does not depend on the adapter at import time.
     from marketingiq.infrastructure.discovery import (
         DiscoveryInvalidFilter,

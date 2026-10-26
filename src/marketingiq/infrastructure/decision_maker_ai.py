@@ -1,6 +1,7 @@
-"""OpenAI adapter for decision-maker discovery (role resolution and page extraction).
+"""AI adapter for decision-maker discovery (role resolution and page extraction).
 
-Uses the Responses API with a strict JSON schema. The model only receives evidence already
+Runs on OpenAI, Claude or DeepSeek (see ``ai_config``). OpenAI enforces the JSON schema natively;
+the others are instructed to follow it. The model only receives evidence already
 collected (titles, departments, page text); callers validate every value it returns and fall
 back to rules on any failure. Model reasoning is never requested or stored; each item carries
 only a one-sentence, evidence-citing explanation.
@@ -10,15 +11,22 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from typing import Any
 
 import httpx
 
-from marketingiq.infrastructure.campaign_ai_provider import (
-    DEFAULT_MODEL,
-    RESPONSES_URL,
-    _int_or_none,
-    _response_text,
+from marketingiq.infrastructure.ai_config import (
+    AIFeature,
+    AIProviderName,
+    AIProviderSettings,
+    resolve_ai_settings,
+)
+from marketingiq.infrastructure.llm_clients import (
+    JSONSchema,
+    LLMError,
+    build_llm_client,
+    extract_json_object,
 )
 
 PROMPT_VERSION = "decision-maker-roles-v1"
@@ -83,23 +91,18 @@ PEOPLE_SCHEMA: dict[str, Any] = {
 }
 
 
-class OpenAIDecisionMakerClient:
-    key = "OPENAI"
-
-    def __init__(self, client: httpx.Client | None = None) -> None:
-        self.api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-        self.model = (
-            os.environ.get("ROLE_RESOLVER_MODEL", "").strip()
-            or os.environ.get("CAMPAIGN_AI_MODEL", "").strip()
-            or DEFAULT_MODEL
-        )
-        self.timeout_seconds = float(os.environ.get("CAMPAIGN_AI_TIMEOUT_SECONDS", "30"))
-        self.client = client
+class LLMDecisionMakerClient:
+    def __init__(self, settings: AIProviderSettings, client: httpx.Client | None = None) -> None:
+        self.settings = settings
+        self.key = settings.provider_label.upper()
+        self.model = settings.model
+        self.timeout_seconds = settings.timeout_seconds
+        self._llm = build_llm_client(settings, client) if settings.provider else None
         self.last_usage: dict[str, int | None] = {}
 
     @property
     def configured(self) -> bool:
-        return bool(self.api_key)
+        return self.settings.configured
 
     def resolve_roles(
         self, candidates: list[dict[str, Any]], personas: list[dict[str, Any]]
@@ -157,63 +160,50 @@ class OpenAIDecisionMakerClient:
         *,
         max_output_tokens: int,
     ) -> dict[str, Any]:
-        if not self.configured:
+        if self._llm is None or not self.configured:
             raise DecisionMakerAIError("NOT_CONFIGURED")
-        body = {
-            "model": self.model,
-            "instructions": instructions,
-            "input": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-            "max_output_tokens": max_output_tokens,
-            "text": {
-                "format": {
-                    "type": "json_schema",
-                    "name": schema_name,
-                    "schema": schema,
-                    "strict": True,
-                }
-            },
-        }
-        http = self.client or httpx.Client(timeout=self.timeout_seconds)
         try:
-            response = http.post(
-                RESPONSES_URL,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=body,
-                timeout=self.timeout_seconds,
+            response = self._llm.complete(
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                max_output_tokens=max_output_tokens,
+                system=instructions,
+                json_schema=JSONSchema(schema_name, schema),
             )
-        except (httpx.TimeoutException, httpx.NetworkError):
-            raise DecisionMakerAIError("NETWORK_ERROR") from None
-        except httpx.HTTPError:
-            raise DecisionMakerAIError("NETWORK_ERROR") from None
-        if response.status_code == 429:
-            raise DecisionMakerAIError("RATE_LIMITED")
-        if response.status_code in {401, 403}:
-            raise DecisionMakerAIError("AUTHENTICATION_ERROR")
-        if response.status_code >= 500:
-            raise DecisionMakerAIError("PROVIDER_UNAVAILABLE")
-        if response.status_code >= 400:
-            raise DecisionMakerAIError("PROVIDER_REJECTED_REQUEST")
+        except LLMError as error:
+            raise DecisionMakerAIError(error.category) from None
         try:
-            data = response.json()
-            parsed = json.loads(_response_text(data))
-        except (ValueError, TypeError, AttributeError, json.JSONDecodeError):
+            parsed = extract_json_object(response.text)
+        except (ValueError, TypeError):
             raise DecisionMakerAIError("INVALID_PROVIDER_RESPONSE") from None
         if not isinstance(parsed, dict):
             raise DecisionMakerAIError("INVALID_PROVIDER_RESPONSE")
-        usage = data.get("usage") or {}
         self.last_usage = {
-            "input_tokens": _int_or_none(usage.get("input_tokens")),
-            "output_tokens": _int_or_none(usage.get("output_tokens")),
+            "input_tokens": response.input_tokens,
+            "output_tokens": response.output_tokens,
         }
         return parsed
 
     def status(self) -> dict[str, Any]:
         return {
             "provider_key": self.key,
+            "provider": self.settings.provider_label,
             "configured": self.configured,
             "model": self.model,
             "prompt_version": PROMPT_VERSION,
+            "configuration_error": self.settings.error,
         }
+
+
+class OpenAIDecisionMakerClient(LLMDecisionMakerClient):
+    """Backwards-compatible OpenAI-only constructor (OPENAI_API_KEY / ROLE_RESOLVER_MODEL)."""
+
+    def __init__(self, client: httpx.Client | None = None) -> None:
+        env = dict(os.environ)
+        env["DECISION_MAKER_AI_PROVIDER"] = AIProviderName.OPENAI.value
+        super().__init__(resolve_ai_settings(AIFeature.DECISION_MAKER, env), client)
+
+
+def build_decision_maker_ai_client(
+    env: Mapping[str, str] | None = None, client: httpx.Client | None = None
+) -> LLMDecisionMakerClient:
+    return LLMDecisionMakerClient(resolve_ai_settings(AIFeature.DECISION_MAKER, env), client)

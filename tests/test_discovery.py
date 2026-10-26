@@ -419,3 +419,84 @@ def test_discovery_api_end_to_end(tmp_path):
     assert updated.json()["enabled"] is False
     with Session(engine) as session:
         assert session.scalar(select(func.count()).select_from(CompanyDiscoveryRun)) == 1
+
+
+class FakeAISource:
+    key = "AI_WEB_SEARCH"
+    label = "AI web search"
+    accepts_exclusions = True
+    costs_credits = True
+    configured = True
+
+    def status(self):
+        return {"provider": "deepseek", "model": "deepseek-v4-flash", "configuration_error": None}
+
+    def discover(self, criteria, offset=0, exclude_domains=()):
+        return DiscoveryResult(
+            "AI_WEB_SEARCH",
+            (
+                DiscoveredCompany(
+                    "aiport.example",
+                    "AI Port",
+                    source_urls=("https://aiport.example/about",),
+                    rationale="Runs a container terminal.",
+                ),
+            ),
+            None,
+            usage={"provider": "deepseek", "searches": 3},
+        )
+
+
+def test_discovery_api_ai_source_selection_and_daily_limit(tmp_path, monkeypatch):
+    monkeypatch.setenv("DISCOVERY_AI_DAILY_LIMIT", "1")
+    url = f"sqlite+pysqlite:///{tmp_path / 'discovery-ai.db'}"
+    engine = create_engine(url)
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        seeded = seed(session)
+        org_id, product_id = seeded["org"].id, seeded["product"].id
+    app = create_app(url, SECRET)
+    app.state.discovery_provider = FakeDiscovery([("hunter1.example", "Hunter One")], total=1)
+    app.state.extra_discovery_providers = {"AI_WEB_SEARCH": FakeAISource()}
+    client = TestClient(app)
+    token = client.post(
+        "/api/v1/auth/login", json={"email": "owner@example.test", "password": PASSWORD}
+    ).json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    base = f"/api/v1/organizations/{org_id}/company-discovery"
+
+    sources = {s["key"]: s for s in client.get(base + "/sources", headers=headers).json()}
+    assert sources["AI_WEB_SEARCH"]["used_today"] == 0
+    assert sources["AI_WEB_SEARCH"]["daily_limit"] == 1
+    assert "api_key" not in str(sources)
+
+    preview = client.post(
+        base + "/preview", json={"countries": ["SA"], "provider_key": "AI_WEB_SEARCH"},
+        headers=headers,
+    )
+    assert preview.status_code == 200
+    company = preview.json()["companies"][0]
+    assert company["source_urls"] == ["https://aiport.example/about"]
+    assert company["rationale"] == "Runs a container terminal."
+
+    limited = client.post(
+        base + "/preview", json={"countries": ["SA"], "provider_key": "AI_WEB_SEARCH"},
+        headers=headers,
+    )
+    assert limited.status_code == 409
+    assert limited.json()["code"] == "DAILY_LIMIT"
+    unknown = client.post(
+        base + "/preview", json={"countries": ["SA"], "provider_key": "BING"}, headers=headers
+    )
+    assert unknown.status_code == 422
+
+    created = client.post(
+        base + "/policies",
+        json={"product_id": product_id, "countries": ["SA"], "run_workflow": False,
+              "provider_key": "AI_WEB_SEARCH"},
+        headers=headers,
+    )
+    assert created.status_code == 201
+    assert created.json()["provider_key"] == "AI_WEB_SEARCH"
+    run = client.post(base + f"/policies/{created.json()['id']}/run", headers=headers).json()
+    assert run["status"] == "FAILED" and run["error_code"] == "DISCOVERY_DAILY_LIMIT"
