@@ -55,7 +55,6 @@ from marketingiq.application.unsubscribe import (
     record_opt_out,
 )
 from marketingiq.domain.models import OrganizationMembership, ReviewAction, User
-from marketingiq.domain.providers import ProviderError
 from marketingiq.infrastructure.database import create_database_engine, create_session_factory
 from marketingiq.infrastructure.providers import HunterProvider, PublicWebProvider
 from marketingiq.infrastructure.schema_status import inspect_database_schema
@@ -231,15 +230,6 @@ def create_app(
     @app.exception_handler(ValueError)
     async def invalid_company_input(_request, error):
         return JSONResponse({"detail": str(error)}, status_code=422)
-
-    @app.exception_handler(ProviderError)
-    async def provider_failure(_request, error):
-        # Provider messages are fixed, credential-free strings; categories drive UI wording.
-        category = getattr(error, "category", "PROVIDER_ERROR")
-        conflict = category in {"NOT_CONFIGURED", "DAILY_LIMIT", "INSUFFICIENT_BALANCE"}
-        return JSONResponse(
-            {"detail": str(error), "code": category}, status_code=409 if conflict else 502
-        )
 
     @app.post("/api/v1/auth/login", response_model=TokenResponse)
     def login(request: Request, body: LoginRequest, db: Session = Depends(session)):

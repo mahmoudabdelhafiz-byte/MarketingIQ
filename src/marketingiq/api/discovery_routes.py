@@ -5,12 +5,14 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import Depends, FastAPI
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from marketingiq.application.discovery import CompanyDiscoveryService, normalize_criteria
 from marketingiq.application.research import ProviderRegistry
 from marketingiq.application.tenant import TenantContext
+from marketingiq.domain.providers import ProviderError
 from marketingiq.infrastructure.ai_discovery import KEY as AI_SOURCE_KEY
 from marketingiq.infrastructure.ai_discovery import build_ai_discovery_provider
 from marketingiq.infrastructure.discovery import HunterDiscoveryProvider
@@ -107,7 +109,15 @@ def register_discovery_routes(
         svc: CompanyDiscoveryService = Depends(discovery_service),
     ):
         criteria = normalize_criteria(**body.model_dump(exclude={"provider_key"}))
-        return svc.preview(criteria, provider_key=body.provider_key)
+        try:
+            return svc.preview(criteria, provider_key=body.provider_key)
+        except ProviderError as error:
+            # Provider messages are fixed, credential-free strings; the code drives UI wording.
+            category = getattr(error, "category", "PROVIDER_ERROR")
+            conflict = category in {"NOT_CONFIGURED", "DAILY_LIMIT", "INSUFFICIENT_BALANCE"}
+            return JSONResponse(
+                {"detail": str(error), "code": category}, status_code=409 if conflict else 502
+            )
 
     @app.post(base + "/add", status_code=201)
     def add(body: DiscoveryAddRequest, svc: CompanyDiscoveryService = Depends(discovery_service)):
