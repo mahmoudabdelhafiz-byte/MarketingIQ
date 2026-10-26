@@ -50,7 +50,22 @@ if [ -n "$names" ] && [ -n "${APP_VENV:-}" ] && [ -f "$APP_VENV" ]; then
     . "$APP_VENV"
     cd "$APP_ROOT" || exit 0
     echo "Installed package: $(python -m pip show marketingiq 2>/dev/null | awk '/^Version:/{print $2}')"
-    python - <<'PY' 2>&1 | tail -n 6
+    python - <<'PY' 2>&1 | tail -n 1
+import filecmp
+import pathlib
+
+import marketingiq
+
+installed = pathlib.Path(marketingiq.__file__).resolve().parent
+source = pathlib.Path("src/marketingiq").resolve()
+if installed == source:
+    print("Installed code: editable install of the app folder")
+else:
+    files = [p.relative_to(source) for p in source.rglob("*") if p.is_file() and "__pycache__" not in p.parts]
+    stale = [str(f) for f in files if not (installed / f).is_file() or not filecmp.cmp(source / f, installed / f, shallow=False)]
+    print(f"Installed code: {len(files) - len(stale)}/{len(files)} files match the app folder" + (f"; differ: {' '.join(stale[:8])}" if stale else ""))
+PY
+    python - <<'PY' 2>&1 | tail -n 2
 from sqlalchemy import text
 
 from marketingiq.infrastructure.database import create_database_engine
