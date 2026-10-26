@@ -8,7 +8,43 @@ documented in [Provider research foundation](docs/provider-research.md).
 
 MarketingIQ is a multi-tenant B2B marketing-intelligence platform intended to turn
 company evidence, product fit, buyer-role and campaign outcomes into reusable intelligence.
-The repository contains the Sprint 1 domain foundation and a thin authenticated internal API.
+
+The application covers the full guarded outbound workflow — company import and public research,
+product/ICP fit scoring, lead qualification, contact discovery, grounded (optionally AI-assisted)
+campaign drafting, human review and approval, SMTP sending with one-click unsubscribe, engagement
+tracking, a sales pipeline and conversion learning — behind an authenticated, tenant-scoped API.
+A dependency-free web interface for operators is served at `/` by the same application.
+
+## Automatic company discovery
+
+**Automation** in the web interface finds new companies matching a product's ICP through Hunter
+Discover (free, no credits), on demand or on a schedule, adds them as `discovered`, and can run
+research → fit → qualification on each. See [Company discovery](docs/company-discovery.md). Scheduled
+rules need the cron lines in [cPanel Passenger deployment](docs/cpanel-passenger.md).
+
+## Decision-maker discovery
+
+For a qualified company, **Decision makers** finds the best 1–3 people for each of a product's
+target personas: company website first (free), optional AI role checks, then — only with
+explicit credit approval — one filtered Hunter search and email find/verify for the top people.
+Every person has stored evidence, an employment state and a transparent score; emails are never
+guessed and LinkedIn is never scraped. See [Decision-maker discovery](docs/decision-maker-discovery.md).
+
+## Web interface and first administrator
+
+There is no public sign-up. After migrations, create the first organization administrator from
+the hosting shell (the password is read from the environment or prompted, never passed as an
+argument):
+
+```bash
+MARKETINGIQ_ADMIN_PASSWORD='<at-least-12-characters>' \
+  python -m marketingiq.jobs.create_admin --email you@example.com \
+  --org-name "Barmageyat" --org-slug barmageyat
+```
+
+The command is idempotent; add `--reset-password` to change an existing user's password. Then
+sign in at the application URL. Sign-in is throttled per email and per client address after
+repeated failures, and response timing does not reveal whether an account exists.
 
 ## Stack
 
@@ -79,4 +115,4 @@ Tenant resources live below `/api/v1/organizations/{org_id}`. Authentication and
 
 Product routes support list/get/create/update and activation. ICP routes support list/get/create, immutable revision-on-update, and activation. Company routes find or create a shared identity by normalized domain, attach it to a tenant, and expose updates only for tenant-private relationship fields. Create/update actions emit an `AuditLog` in the same transaction.
 
-Deferred: registration, MFA, SSO/OAuth, password recovery, token revocation/refresh, organization administration, public APIs, providers, research, campaigns, outreach, billing, and AI features.
+Not yet implemented: self-service registration, MFA, SSO/OAuth, password recovery, token revocation/refresh, organization/user administration screens, public commercial APIs, and billing.

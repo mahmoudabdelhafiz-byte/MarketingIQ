@@ -7,9 +7,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from marketingiq.application.authorization import Permission, require_permission
+from marketingiq.application.decision_makers import targeting_block_reason
 from marketingiq.application.errors import ConflictError, NotFoundError
 from marketingiq.application.fit_freshness import FitAssessmentFreshnessService
 from marketingiq.application.tenant import TenantContext
+from marketingiq.application.unsubscribe import UnsubscribeLinks
 from marketingiq.domain.campaigns import (
     CampaignDraft,
     CampaignDraftReviewEvent,
@@ -75,11 +77,13 @@ class OutboundSendService:
         tenant: TenantContext,
         registry: OutboundSenderRegistry,
         now: datetime | None = None,
+        unsubscribe_links: UnsubscribeLinks | None = None,
     ) -> None:
         self.session = session
         self.tenant = tenant
         self.registry = registry
         self.now = now or datetime.now(UTC)
+        self.unsubscribe_links = unsubscribe_links
         self.freshness = FitAssessmentFreshnessService(session, tenant, now=self.now)
 
     def send(
@@ -152,6 +156,11 @@ class OutboundSendService:
                     subject=approval.subject,
                     body=approval.body,
                     idempotency_key=clean_key,
+                    unsubscribe_url=(
+                        self.unsubscribe_links.url(self.tenant.organization_id, email.email)
+                        if self.unsubscribe_links is not None
+                        else None
+                    ),
                 )
             )
             if not result.accepted:
@@ -322,6 +331,9 @@ class OutboundSendService:
             raise NotFoundError("Contact not found for this qualification")
         if contact.buyer_role_match not in ALIGNED_ROLE_MATCHES:
             raise ConflictError("OUTBOUND_BUYER_ROLE_ALIGNMENT_REQUIRED")
+        blocked = targeting_block_reason(contact)
+        if blocked:
+            raise ConflictError(f"OUTBOUND_{blocked}")
         return contact
 
     def _verified_email(self, contact_id: str) -> ContactEmail:

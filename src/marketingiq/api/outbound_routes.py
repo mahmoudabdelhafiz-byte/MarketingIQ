@@ -36,7 +36,12 @@ def register_outbound_routes(
         context: Annotated[TenantContext, Depends(tenant_dependency)],
         db: Annotated[Session, Depends(session_dependency)],
     ) -> OutboundSendService:
-        return OutboundSendService(db, context, app.state.outbound_sender_registry)
+        return OutboundSendService(
+            db,
+            context,
+            app.state.outbound_sender_registry,
+            unsubscribe_links=getattr(app.state, "unsubscribe_links", None),
+        )
 
     OutboundService = Annotated[OutboundSendService, Depends(outbound_service)]
     draft_prefix = prefix + "/companies/{relationship_id}/campaign-drafts/{draft_id}"

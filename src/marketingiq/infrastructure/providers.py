@@ -16,6 +16,7 @@ from marketingiq.domain.providers import (
     ProviderAuthenticationError,
     ProviderCapability,
     ProviderContact,
+    ProviderContactSource,
     ProviderError,
     ProviderFact,
     ProviderMalformedResponse,
@@ -108,8 +109,14 @@ class PublicWebProvider:
     def configured(self) -> bool:
         return True
 
-    def _fetch(self, url: str) -> tuple[str, str, datetime]:
+    def _fetch(
+        self, url: str, allowed_hosts: frozenset[str] | None = None
+    ) -> tuple[str, str, datetime]:
         for _ in range(MAX_REDIRECTS + 1):
+            if allowed_hosts is not None and (urlsplit(url).hostname or "").lower() not in (
+                allowed_hosts
+            ):
+                raise UnsafePublicUrl("Redirect left the permitted site")
             validate_public_url(url, self.resolver)
             try:
                 response = self.client.get(url, headers={"User-Agent": USER_AGENT})
@@ -198,6 +205,23 @@ class PublicWebProvider:
         return ProviderResult(provider_key=self.key, facts=tuple(facts))
 
 
+HUNTER_DEPARTMENTS = frozenset(
+    {
+        "executive", "it", "finance", "management", "sales", "legal", "support", "hr",
+        "marketing", "communication", "education", "design", "health", "operations",
+        "product", "research", "consulting", "administrative", "procurement",
+    }
+)
+HUNTER_SENIORITIES = frozenset({"junior", "senior", "executive"})
+
+
+def _text(value) -> str | None:
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    return None
+
+
 class HunterProvider:
     key = "HUNTER"
     capabilities = frozenset(
@@ -219,49 +243,86 @@ class HunterProvider:
         return bool(self._api_key)
 
     def enrich_company(self, normalized_domain: str) -> ProviderResult:
+        """Company facts from Hunter Company Enrichment (GET /v2/companies/find).
+
+        Domain Search only returns the organisation *name* (a string), so it cannot provide
+        company facts. A 404 means Hunter has no profile for the domain: no facts, no error.
+        """
         if not self.configured:
             raise ProviderNotConfigured("Hunter is not configured")
         client = self.client or httpx.Client(timeout=10)
         try:
             response = client.get(
-                "https://api.hunter.io/v2/domain-search",
+                "https://api.hunter.io/v2/companies/find",
                 params={"domain": normalized_domain, "api_key": self._api_key},
             )
         except httpx.HTTPError as error:
             raise ProviderError("Hunter request failed") from error
+        if response.status_code == 404:
+            return ProviderResult(
+                provider_key=self.key,
+                facts=(),
+                classification=DataClassification.THIRD_PARTY_LICENSED,
+                redistribution_status=RedistributionStatus.UNKNOWN,
+                request_identifier=response.headers.get("x-request-id"),
+            )
         if response.status_code == 429:
             raise ProviderRateLimited("Hunter rate limit reached")
+        if response.status_code in {401, 403}:
+            raise ProviderAuthenticationError("Hunter authentication failed")
         if response.status_code >= 400:
             raise ProviderError(f"Hunter request failed with HTTP {response.status_code}")
         try:
             payload = response.json()
         except ValueError as error:
-            raise ProviderError("Hunter returned an invalid response") from error
-        data = payload.get("data") or {}
-        organization = data.get("organization") or {}
+            raise ProviderMalformedResponse("Hunter returned an invalid response") from error
+        if not isinstance(payload, dict):
+            raise ProviderMalformedResponse("Hunter returned a malformed response")
+        data = payload.get("data")
+        data = data if isinstance(data, dict) else {}
+
+        def part(key: str) -> dict:
+            value = data.get(key)
+            return value if isinstance(value, dict) else {}
+
+        category, geo, metrics = part("category"), part("geo"), part("metrics")
+        country_code = _text(geo.get("countryCode"))
+        country = (
+            country_code.upper()
+            if country_code and len(country_code) == 2
+            else _text(geo.get("country"))
+        )
+        employee_count = metrics.get("employeesCount")
         retrieved = datetime.now(UTC)
-        source = f"hunter:domain:{normalized_domain}"
+        source = f"hunter:company:{normalized_domain}"
         mapping = {
-            "company_description": organization.get("description"),
-            "industry": organization.get("industry"),
-            "country": organization.get("country"),
-            "headquarters": organization.get("location"),
-            "employee_range": organization.get("company_size"),
+            "company_description": _text(data.get("description")),
+            "industry": _text(category.get("industry"))
+            or _text(category.get("industryGroup"))
+            or _text(category.get("sector")),
+            "country": country,
+            "headquarters": _text(data.get("location")),
+            "employee_range": _text(metrics.get("employees")),
+            "employee_count": employee_count
+            if isinstance(employee_count, int) and employee_count > 0
+            else None,
         }
         facts = tuple(
             ProviderFact(key, value, 80, None, retrieved, source)
             for key, value in mapping.items()
             if value not in (None, "", [])
         )
-        meta = payload.get("meta") or {}
+        meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+        params = meta.get("params") if isinstance(meta.get("params"), dict) else {}
+        credits = meta.get("credits") if isinstance(meta.get("credits"), dict) else {}
         return ProviderResult(
             provider_key=self.key,
             facts=facts,
             classification=DataClassification.THIRD_PARTY_LICENSED,
             redistribution_status=RedistributionStatus.UNKNOWN,
             request_identifier=response.headers.get("x-request-id"),
-            credits_used=meta.get("params", {}).get("credits_used"),
-            credits_remaining=meta.get("credits", {}).get("available"),
+            credits_used=params.get("credits_used"),
+            credits_remaining=credits.get("available"),
         )
 
     def _request(self, path: str, params: dict) -> tuple[dict, object]:
@@ -291,17 +352,43 @@ class HunterProvider:
     def _contact(item: dict) -> ProviderContact:
         if not isinstance(item, dict):
             raise ProviderMalformedResponse("Hunter returned a malformed contact")
-        first, last = item.get("first_name"), item.get("last_name")
+        first, last = _text(item.get("first_name")), _text(item.get("last_name"))
+        sources = []
+        for source in item.get("sources") or []:
+            if isinstance(source, dict):
+                sources.append(
+                    ProviderContactSource(
+                        uri=_text(source.get("uri")),
+                        domain=_text(source.get("domain")),
+                        extracted_on=_text(source.get("extracted_on")),
+                        last_seen_on=_text(source.get("last_seen_on")),
+                        still_on_page=source.get("still_on_page")
+                        if isinstance(source.get("still_on_page"), bool)
+                        else None,
+                    )
+                )
+        verification = item.get("verification")
+        if not isinstance(verification, dict):
+            verification = {}
         return ProviderContact(
             reference=str(item.get("id")) if item.get("id") is not None else None,
             first_name=first,
             last_name=last,
             full_name=" ".join(x for x in (first, last) if x) or None,
-            job_title=item.get("position"),
-            department=item.get("department"),
-            seniority=item.get("seniority"),
-            email=item.get("value"),
+            job_title=_text(item.get("position")),
+            department=_text(item.get("department")),
+            seniority=_text(item.get("seniority")),
+            email=_text(item.get("value")),
             confidence=item.get("confidence") if isinstance(item.get("confidence"), int) else None,
+            position_raw=_text(item.get("position_raw")),
+            decision_maker=item.get("decision_maker")
+            if isinstance(item.get("decision_maker"), bool)
+            else None,
+            linkedin=_text(item.get("linkedin")) or _text(item.get("linkedin_url")),
+            email_type=_text(item.get("type")),
+            sources=tuple(sources[:20]),
+            verification_status=_text(verification.get("status")),
+            verification_date=_text(verification.get("date")),
         )
 
     @staticmethod
@@ -326,6 +413,34 @@ class HunterProvider:
             raise ProviderMalformedResponse("Hunter returned malformed contacts")
         return self._result(
             payload, response, tuple(self._contact(x) for x in emails[:max_results])
+        )
+
+    def search_decision_makers(
+        self,
+        company_identifier: str,
+        *,
+        departments: list[str] | tuple[str, ...] = (),
+        seniorities: list[str] | tuple[str, ...] = (),
+        max_results: int = 25,
+    ) -> ContactProviderResult:
+        """One filtered Domain Search for named people (Hunter charges per call with results)."""
+        params: dict = {
+            "domain": company_identifier,
+            "limit": max(1, min(int(max_results), 100)),
+            "type": "personal",
+        }
+        departments = [x for x in departments if x in HUNTER_DEPARTMENTS]
+        seniorities = [x for x in seniorities if x in HUNTER_SENIORITIES]
+        if departments:
+            params["department"] = ",".join(sorted(set(departments)))
+        if seniorities:
+            params["seniority"] = ",".join(sorted(set(seniorities)))
+        payload, response = self._request("domain-search", params)
+        emails = (payload.get("data") or {}).get("emails", [])
+        if not isinstance(emails, list):
+            raise ProviderMalformedResponse("Hunter returned malformed contacts")
+        return self._result(
+            payload, response, tuple(self._contact(x) for x in emails[: params["limit"]])
         )
 
     def find_email(self, person: dict) -> ContactProviderResult:

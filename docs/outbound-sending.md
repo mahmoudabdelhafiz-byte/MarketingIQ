@@ -17,6 +17,20 @@ A send is eligible only when all of the following are true:
 
 A stale qualification is never silently refreshed. The user must re-run the earlier workflow and approve a new/current draft before sending.
 
+## Unsubscribe and suppression
+
+Every sent message carries a signed one-click unsubscribe link, both in an RFC 2369/8058
+`List-Unsubscribe` + `List-Unsubscribe-Post: List-Unsubscribe=One-Click` header pair and as a short
+footer in the body. The link token carries the tenant ID and recipient address (encoded, not
+encrypted — the link is only ever sent to that recipient) plus an HMAC signature keyed from
+`AUTH_SECRET`, so it needs no database lookup and cannot be altered to target another tenant or
+address. The confirmation page shows only a masked form of the address.
+
+`GET /unsubscribe?t=…` shows a confirmation page; `POST /unsubscribe?t=…` (the page's button, or a
+mail client's one-click request) records an idempotent tenant-scoped `OPT_OUT` suppression, which
+the send gate above then enforces. `MARKETINGIQ_PUBLIC_URL` must be set to the application's
+public https URL whenever SMTP is enabled; production preflight refuses to start otherwise.
+
 ## Human action and idempotency
 
 `POST .../campaign-drafts/{draft_id}/send` requires `SEND_OUTBOUND_EMAIL`. Marketing Users and Organization Admins have this permission; Read Only users do not.

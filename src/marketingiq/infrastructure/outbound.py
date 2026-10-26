@@ -16,6 +16,14 @@ from marketingiq.domain.outbound import (
 )
 
 
+def unsubscribe_footer(body: str, unsubscribe_url: str) -> str:
+    return (
+        f"{body.rstrip()}\n\n--\n"
+        f"If you would prefer not to receive further emails from us, unsubscribe here:\n"
+        f"{unsubscribe_url}\n"
+    )
+
+
 def _env_bool(name: str, default: bool) -> bool:
     value = os.environ.get(name)
     if value is None:
@@ -67,7 +75,13 @@ class SMTPEmailSender:
         email["Subject"] = message.subject
         email["Message-ID"] = make_msgid()
         email["X-MarketingIQ-Idempotency-Key"] = message.idempotency_key
-        email.set_content(message.body)
+        body = message.body
+        if message.unsubscribe_url:
+            # RFC 2369 / RFC 8058 one-click unsubscribe, required by major mailbox providers.
+            email["List-Unsubscribe"] = f"<{message.unsubscribe_url}>"
+            email["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+            body = unsubscribe_footer(body, message.unsubscribe_url)
+        email.set_content(body)
 
         try:
             if self.use_ssl:

@@ -1,11 +1,14 @@
+import html
 import os
 from collections.abc import Generator
+from pathlib import Path
 from typing import Any
 
 import jwt
-from fastapi import Depends, FastAPI, Header, HTTPException, status
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -25,6 +28,7 @@ from marketingiq.api.schemas import (
     ICPWrite,
     IntelligenceReview,
     LoginRequest,
+    MembershipResponse,
     MeResponse,
     ProductResponse,
     ProductWrite,
@@ -41,15 +45,27 @@ from marketingiq.application.errors import AuthorizationError, ConflictError, No
 from marketingiq.application.fit import FitAssessmentService
 from marketingiq.application.fit_freshness import FitAssessmentFreshnessService
 from marketingiq.application.intelligence import IntelligenceService, ReviewRequest
+from marketingiq.application.login_throttle import LoginThrottled, LoginThrottleService
 from marketingiq.application.qualification import LeadQualificationService
 from marketingiq.application.research import CompanyResearchService, ProviderRegistry
 from marketingiq.application.tenant import TenantContext
+from marketingiq.application.unsubscribe import (
+    InvalidUnsubscribeToken,
+    UnsubscribeLinks,
+    record_opt_out,
+)
 from marketingiq.domain.models import OrganizationMembership, ReviewAction, User
 from marketingiq.infrastructure.database import create_database_engine, create_session_factory
 from marketingiq.infrastructure.providers import HunterProvider, PublicWebProvider
 from marketingiq.infrastructure.schema_status import inspect_database_schema
 
 bearer = HTTPBearer(auto_error=False)
+WEB_ROOT = Path(__file__).resolve().parent.parent / "web"
+PUBLIC_URL_ENV = "MARKETINGIQ_PUBLIC_URL"
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; "
+    "connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'"
+)
 
 _ALLOWED_APP_ENVIRONMENTS = {"development", "test", "staging", "production"}
 _EXAMPLE_AUTH_SECRET = "replace-with-a-random-development-value"
@@ -67,7 +83,11 @@ def _database_is_ready(engine) -> bool:
     return inspect_database_schema(engine).ready
 
 
-def create_app(database_url: str | None = None, auth_secret: str | None = None) -> FastAPI:
+def create_app(
+    database_url: str | None = None,
+    auth_secret: str | None = None,
+    public_base_url: str | None = None,
+) -> FastAPI:
     environment = _application_environment()
     secret = auth_secret or os.environ.get("AUTH_SECRET")
     if not secret or len(secret) < 32:
@@ -86,6 +106,8 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
     )
     app.state.environment = environment
     app.state.provider_registry = ProviderRegistry([PublicWebProvider(), HunterProvider()])
+    base_url = public_base_url or os.environ.get(PUBLIC_URL_ENV, "").strip()
+    app.state.unsubscribe_links = UnsubscribeLinks(secret, base_url) if base_url else None
 
     if production:
         @app.middleware("http")
@@ -96,6 +118,7 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
             response.headers["X-Frame-Options"] = "DENY"
             response.headers["Referrer-Policy"] = "no-referrer"
             response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+            response.headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY
             return response
 
     @app.get("/health/live", include_in_schema=False)
@@ -209,9 +232,22 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
         return JSONResponse({"detail": str(error)}, status_code=422)
 
     @app.post("/api/v1/auth/login", response_model=TokenResponse)
-    def login(body: LoginRequest, db: Session = Depends(session)):
+    def login(request: Request, body: LoginRequest, db: Session = Depends(session)):
+        address = request.client.host if request.client else None
+        throttle = LoginThrottleService(db)
+        try:
+            throttle.check(body.email, address)
+        except LoginThrottled as error:
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "Too many failed sign-in attempts. Try again later.",
+                headers={"Retry-After": str(error.retry_after_seconds)},
+            ) from None
         user = authenticate(db, body.email, body.password)
         if user is None:
+            throttle.record_failure(body.email, address)
+            # Persist the failure before the error response rolls the request session back.
+            db.commit()
             raise HTTPException(401, "Invalid email or password")
         return TokenResponse(access_token=create_access_token(user, secret))
 
@@ -224,7 +260,14 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
             id=user.id,
             email=user.email,
             is_super_admin=user.is_super_admin,
-            memberships=memberships,
+            memberships=[
+                MembershipResponse(
+                    organization_id=item.organization_id,
+                    organization_name=item.organization.name if item.organization else None,
+                    role=item.role,
+                )
+                for item in memberships
+            ],
         )
 
     prefix = "/api/v1/organizations/{org_id}"
@@ -536,7 +579,92 @@ def create_app(database_url: str | None = None, auth_secret: str | None = None) 
         return app.state.provider_registry.status()
 
     register_campaign_routes(app, prefix, tenant, session)
+    _register_web_routes(app, session)
     return app
+
+
+def _register_web_routes(app: FastAPI, session_dependency) -> None:
+    """Serve the single-page operator UI and the public unsubscribe pages."""
+
+    if WEB_ROOT.is_dir():
+        app.mount("/static", StaticFiles(directory=WEB_ROOT), name="static")
+
+    @app.get("/", include_in_schema=False)
+    def web_app():
+        index = WEB_ROOT / "index.html"
+        if not index.is_file():
+            return JSONResponse({"detail": "Web interface is not installed"}, status_code=404)
+        return FileResponse(index, media_type="text/html")
+
+    def recipient(token: str):
+        links: UnsubscribeLinks | None = app.state.unsubscribe_links
+        if links is None:
+            return None
+        try:
+            return links.parse(token)
+        except InvalidUnsubscribeToken:
+            return None
+
+    @app.get("/unsubscribe", include_in_schema=False)
+    def unsubscribe_page(t: str = ""):
+        found = recipient(t)
+        if found is None:
+            return _public_page(
+                "Link not valid",
+                "<p>This unsubscribe link is not valid. If you keep receiving emails you did "
+                "not ask for, reply to the sender and ask to be removed.</p>",
+                status_code=404,
+            )
+        action = "/unsubscribe?" + html.escape(f"t={t}", quote=True)
+        return _public_page(
+            "Unsubscribe",
+            f"<p>Stop receiving emails at <strong>{html.escape(_mask_email(found.email))}"
+            "</strong>?</p>"
+            f'<form method="post" action="{action}">'
+            '<button class="btn primary" type="submit">Unsubscribe</button></form>',
+        )
+
+    @app.post("/unsubscribe", include_in_schema=False)
+    def unsubscribe(t: str = "", db: Session = Depends(session_dependency)):
+        # Handles both the confirmation form and RFC 8058 one-click POSTs from mail clients.
+        found = recipient(t)
+        if found is None:
+            return _public_page(
+                "Link not valid",
+                "<p>This unsubscribe link is not valid.</p>",
+                status_code=404,
+            )
+        try:
+            record_opt_out(db, found)
+        except InvalidUnsubscribeToken:
+            return _public_page(
+                "Link not valid",
+                "<p>This unsubscribe link is no longer valid.</p>",
+                status_code=404,
+            )
+        return _public_page(
+            "You are unsubscribed",
+            f"<p><strong>{html.escape(_mask_email(found.email))}</strong> will not receive "
+            "further emails from this sender.</p>",
+        )
+
+
+def _mask_email(email: str) -> str:
+    local, _, domain = email.partition("@")
+    visible = local[:2] if len(local) > 2 else local[:1]
+    return f"{visible}{'*' * max(1, len(local) - len(visible))}@{domain}"
+
+
+def _public_page(title: str, body_html: str, status_code: int = 200) -> HTMLResponse:
+    page = (
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        f"<title>{html.escape(title)}</title>"
+        "<link rel=\"stylesheet\" href=\"/static/app.css\"></head>"
+        "<body class=\"public\"><main class=\"public-card\">"
+        f"<h1>{html.escape(title)}</h1>{body_html}</main></body></html>"
+    )
+    return HTMLResponse(page, status_code=status_code)
 
 
 def _company_output(item) -> dict[str, Any]:

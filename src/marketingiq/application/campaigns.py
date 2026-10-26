@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from marketingiq.application.authorization import Permission, require_permission
+from marketingiq.application.decision_makers import targeting_block_reason
 from marketingiq.application.errors import ConflictError, NotFoundError
 from marketingiq.application.fit_freshness import FitAssessmentFreshnessService
 from marketingiq.application.tenant import TenantContext
@@ -75,6 +76,9 @@ class CampaignDraftService:
             raise ConflictError("CAMPAIGN_DRAFT_VALUE_PROPOSITION_REQUIRED")
         if contact.buyer_role_match not in ALIGNED_ROLE_MATCHES:
             raise ConflictError("CAMPAIGN_DRAFT_BUYER_ROLE_ALIGNMENT_REQUIRED")
+        blocked = targeting_block_reason(contact)
+        if blocked:
+            raise ConflictError(f"CAMPAIGN_DRAFT_{blocked}")
         if not self._has_verified_email(contact.id):
             raise ConflictError("CAMPAIGN_DRAFT_VERIFIED_EMAIL_REQUIRED")
 
@@ -308,6 +312,9 @@ class CampaignDraftService:
         contact = self._contact(relationship, qualification, draft.contact_id)
         if contact.buyer_role_match not in ALIGNED_ROLE_MATCHES:
             raise ConflictError("CAMPAIGN_DRAFT_BUYER_ROLE_ALIGNMENT_REQUIRED")
+        blocked = targeting_block_reason(contact)
+        if blocked:
+            raise ConflictError(f"CAMPAIGN_DRAFT_{blocked}")
         if not self._has_verified_email(contact.id):
             raise ConflictError("CAMPAIGN_DRAFT_VERIFIED_EMAIL_REQUIRED")
 
