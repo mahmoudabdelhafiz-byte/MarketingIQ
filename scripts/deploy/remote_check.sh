@@ -84,6 +84,74 @@ PY
   while IFS= read -r line; do [ -n "$line" ] && add "$line"; done <<< "$db_report"
 fi
 
+# AI providers: free, read-only key and model-access probes (no searches or completions).
+if [ -n "$names" ]; then
+  ai_report=$(
+    load_cpanel_env
+    python3 - <<'PY' 2>&1 | tail -n 8
+import json
+import os
+import urllib.error
+import urllib.request
+
+DEFAULTS = {"CAMPAIGN": "gpt-5.6-luna", "DISCOVERY": "gpt-5.5", "DECISION_MAKER": "gpt-5.6-luna"}
+
+
+def get(url, headers):
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return response.status, json.loads(response.read() or b"{}")
+    except urllib.error.HTTPError as error:
+        try:
+            body = json.loads(error.read() or b"{}")
+        except ValueError:
+            body = {}
+        return error.code, body
+    except Exception as error:  # noqa: BLE001
+        return 0, {"error": {"code": type(error).__name__}}
+
+
+def code_of(body):
+    err = body.get("error") if isinstance(body, dict) else None
+    if isinstance(err, dict):
+        return str(err.get("code") or err.get("type") or "")
+    return ""
+
+
+provider = (os.environ.get("AI_PROVIDER") or "openai").lower()
+key = os.environ.get("OPENAI_API_KEY", "").strip()
+if key:
+    headers = {"Authorization": "Bearer " + key}
+    status, body = get("https://api.openai.com/v1/models", headers)
+    print(f"OpenAI key: GET /v1/models -> {status} {code_of(body)}".rstrip())
+    if status == 200:
+        available = {m.get("id") for m in body.get("data", []) if isinstance(m, dict)}
+        for feature, default in DEFAULTS.items():
+            env = {"CAMPAIGN": "CAMPAIGN_AI_MODEL", "DISCOVERY": "DISCOVERY_AI_MODEL",
+                   "DECISION_MAKER": "ROLE_RESOLVER_MODEL"}[feature]
+            model = os.environ.get(env, "").strip() or default
+            status, body = get("https://api.openai.com/v1/models/" + model, headers)
+            listed = "listed" if model in available else "not listed"
+            print(f"OpenAI {feature.lower()} model {model}: {status} {code_of(body)} ({listed})".rstrip())
+        gpt = sorted(m for m in available if m and m.startswith("gpt-5"))[-6:]
+        print("OpenAI gpt-5 models on this key: " + (", ".join(gpt) or "none"))
+for name, url, hdr in (
+    ("ANTHROPIC_API_KEY", "https://api.anthropic.com/v1/models", "x-api-key"),
+    ("DEEPSEEK_API_KEY", "https://api.deepseek.com/models", "Authorization"),
+):
+    key = os.environ.get(name, "").strip()
+    if key:
+        value = key if hdr == "x-api-key" else "Bearer " + key
+        headers = {hdr: value, "anthropic-version": "2023-06-01"}
+        status, body = get(url, headers)
+        print(f"{name.split('_')[0].title()} key: GET models -> {status} {code_of(body)}".rstrip())
+print(f"AI_PROVIDER: {provider}")
+PY
+  )
+  while IFS= read -r line; do [ -n "$line" ] && add "$line"; done <<< "$ai_report"
+fi
+
 # Public exposure: server-only files in a folder that may double as the document root.
 public_url="${APP_URL:-}"
 if [ -z "$public_url" ] && [ -n "$names" ]; then
