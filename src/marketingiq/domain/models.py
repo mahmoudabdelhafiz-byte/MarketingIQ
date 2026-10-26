@@ -474,6 +474,27 @@ class ContactCandidate(Base):
         Enum(RedistributionStatus, native_enum=False)
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Decision-maker discovery (all nullable so legacy discovery rows remain valid).
+    persona_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    persona_name: Mapped[str | None] = mapped_column(String(120))
+    position_raw: Mapped[str | None] = mapped_column(String(255))
+    linkedin_url: Mapped[str | None] = mapped_column(String(500))
+    decision_maker: Mapped[bool | None] = mapped_column(Boolean)
+    role_match: Mapped[str | None] = mapped_column(String(20))
+    role_confidence: Mapped[int | None] = mapped_column(Integer)
+    role_reason: Mapped[str | None] = mapped_column(String(300))
+    role_resolver: Mapped[str | None] = mapped_column(String(20))
+    employment_status: Mapped[str | None] = mapped_column(String(30))
+    employment_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    suitability: Mapped[str | None] = mapped_column(String(30))
+    suitability_components: Mapped[Any | None] = mapped_column(JSON)
+    contact_status: Mapped[str | None] = mapped_column(String(40))
+    persona_rank: Mapped[int | None] = mapped_column(Integer)
+    review_status: Mapped[str | None] = mapped_column(String(20))
+    review_note: Mapped[str | None] = mapped_column(String(500))
+    reviewed_by_user_id: Mapped[str | None] = mapped_column(String(36))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_discovery_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     channels: Mapped[list[ContactEmail]] = relationship(cascade="all, delete-orphan")
 
 
@@ -499,6 +520,9 @@ class ContactEmail(Base):
     redistribution_status: Mapped[RedistributionStatus] = mapped_column(
         Enum(RedistributionStatus, native_enum=False)
     )
+    # How the address was obtained (PROVIDER_FOUND / PATTERN_PREDICTED / CUSTOMER_PROVIDED).
+    origin: Mapped[str | None] = mapped_column(String(30))
+    verification_source: Mapped[str | None] = mapped_column(String(50))
 
 
 class CompanyFact(Base):
@@ -575,3 +599,20 @@ class AuditLog(Base):
     entity_id: Mapped[str] = mapped_column(String(36))
     metadata_json: Mapped[Any | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class LoginThrottle(Base):
+    """Fixed-window failed-login counters keyed by hashed email or client address."""
+
+    __tablename__ = "auth_login_throttles"
+    __table_args__ = (
+        UniqueConstraint("bucket_key", "window_start", name="uq_auth_login_throttle_window"),
+        Index("ix_auth_login_throttle_window", "window_start"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    bucket_key: Mapped[str] = mapped_column(String(80))
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    failure_count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )

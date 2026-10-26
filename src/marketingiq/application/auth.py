@@ -16,9 +16,23 @@ def hash_password(password: str) -> str:
     return password_hash.hash(password)
 
 
+_dummy_hash: str | None = None
+
+
+def _timing_equalizer_hash() -> str:
+    global _dummy_hash
+    if _dummy_hash is None:
+        _dummy_hash = password_hash.hash("marketingiq-timing-equalizer")
+    return _dummy_hash
+
+
 def authenticate(session: Session, email: str, password: str) -> User | None:
     user = session.scalar(select(User).where(func.lower(User.email) == email.strip().lower()))
-    if user is None or not user.is_active or not password_hash.verify(password, user.password_hash):
+    # Always run one Argon2 verification so response time does not reveal whether an
+    # account exists or is inactive.
+    stored = user.password_hash if user is not None else _timing_equalizer_hash()
+    valid = password_hash.verify(password, stored)
+    if user is None or not user.is_active or not valid:
         return None
     return user
 

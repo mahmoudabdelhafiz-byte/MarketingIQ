@@ -59,6 +59,17 @@ class ProviderResult:
 
 
 @dataclass(frozen=True)
+class ProviderContactSource:
+    """A page on which the provider observed the person (as reported by the provider)."""
+
+    uri: str | None = None
+    domain: str | None = None
+    extracted_on: str | None = None
+    last_seen_on: str | None = None
+    still_on_page: bool | None = None
+
+
+@dataclass(frozen=True)
 class ProviderContact:
     reference: str | None = None
     first_name: str | None = None
@@ -69,6 +80,14 @@ class ProviderContact:
     seniority: str | None = None
     email: str | None = None
     confidence: int | None = None
+    # Optional richer fields; providers that do not return them leave the defaults.
+    position_raw: str | None = None
+    decision_maker: bool | None = None
+    linkedin: str | None = None
+    email_type: str | None = None
+    sources: tuple[ProviderContactSource, ...] = ()
+    verification_status: str | None = None
+    verification_date: str | None = None
 
 
 @dataclass(frozen=True)

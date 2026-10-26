@@ -29,6 +29,7 @@ class TokenResponse(Schema):
 
 class MembershipResponse(Schema):
     organization_id: str
+    organization_name: str | None = None
     role: MembershipRole
 
 

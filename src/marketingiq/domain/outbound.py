@@ -46,6 +46,7 @@ class OutboundMessage:
     subject: str
     body: str
     idempotency_key: str
+    unsubscribe_url: str | None = None
 
 
 @dataclass(frozen=True)
