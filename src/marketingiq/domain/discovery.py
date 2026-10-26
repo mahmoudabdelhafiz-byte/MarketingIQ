@@ -69,6 +69,9 @@ class DiscoveryCriteria:
 class DiscoveredCompany:
     domain: str
     name: str
+    # Evidence for AI web-search results: pages that were actually retrieved, and why it fits.
+    source_urls: tuple[str, ...] = ()
+    rationale: str | None = None
 
 
 @dataclass(frozen=True)
@@ -77,6 +80,8 @@ class DiscoveryResult:
     companies: tuple[DiscoveredCompany, ...]
     total_results: int | None = None
     notes: tuple[str, ...] = field(default_factory=tuple)
+    # Spend accounting for paid sources (searches, tokens, model); never provider payloads.
+    usage: dict[str, Any] = field(default_factory=dict)
 
 
 class CompanyDiscoveryProvider(Protocol):

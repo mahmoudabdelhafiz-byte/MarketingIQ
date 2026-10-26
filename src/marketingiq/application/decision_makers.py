@@ -229,9 +229,11 @@ class DecisionMakerService:
         self.now = now or datetime.now(UTC)
         self.contacts = ContactDiscoveryService(session, tenant, registry, now=self.now)
         if ai_client is _DEFAULT:
-            from marketingiq.infrastructure.decision_maker_ai import OpenAIDecisionMakerClient
+            from marketingiq.infrastructure.decision_maker_ai import (
+                build_decision_maker_ai_client,
+            )
 
-            ai_client = OpenAIDecisionMakerClient()
+            ai_client = build_decision_maker_ai_client()
         if page_scanner is _DEFAULT:
             from marketingiq.infrastructure.leadership_pages import LeadershipPageScanner
 

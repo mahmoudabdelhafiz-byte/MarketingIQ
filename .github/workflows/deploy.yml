@@ -1,0 +1,116 @@
+name: Deploy
+
+# Deploys MarketingIQ to the cPanel shared-hosting account over SSH. See
+# docs/deployment-github-actions.md.
+#
+# Repository secrets: SSH_HOST, SSH_USER, SSH_PRIVATE_KEY, and optionally SSH_PORT,
+# SSH_KEY_PASSPHRASE, SSH_KNOWN_HOSTS. Optional repository variables: APP_ROOT, APP_VENV, APP_URL.
+# Production settings are read on the server from cPanel's "Setup Python App" page.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "test = read-only check; deploy = update the site; bootstrap-deploy = first deploy"
+        type: choice
+        options: [test, deploy, bootstrap-deploy]
+        default: test
+      ref:
+        description: "Branch to deploy"
+        default: main
+  push:
+    # Changes to the pipeline itself run the read-only check before they are merged.
+    branches: ["ops/**"]
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'test' }}
+      DEPLOY_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || 'main' }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      APP_ROOT: ${{ vars.APP_ROOT }}
+      APP_VENV: ${{ vars.APP_VENV }}
+      APP_URL: ${{ vars.APP_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check configuration
+        run: |
+          missing=""
+          [ -n "$SSH_HOST" ] || missing="$missing SSH_HOST"
+          [ -n "$SSH_USER" ] || missing="$missing SSH_USER"
+          [ "${{ secrets.SSH_PRIVATE_KEY != '' }}" = "true" ] || missing="$missing SSH_PRIVATE_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error title=Missing secrets::Add these repository secrets:$missing"
+            exit 1
+          fi
+          if [ "$MODE" != "test" ] && [ "${{ github.ref_name }}" != "main" ]; then
+            echo "::error::Deploys must be started from the main branch (Use workflow from: main)"
+            exit 1
+          fi
+          case "$DEPLOY_REF" in
+            *[!A-Za-z0-9._/-]*|"") echo "::error::Invalid branch name"; exit 1 ;;
+          esac
+
+      - name: Set up SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_KEY_PASSPHRASE: ${{ secrets.SSH_KEY_PASSPHRASE }}
+        run: bash scripts/deploy/setup_ssh.sh
+
+      - name: Server check (read-only)
+        run: |
+          cat scripts/deploy/common.sh scripts/deploy/remote_check.sh \
+            | ssh server "APP_ROOT='${APP_ROOT}' APP_VENV='${APP_VENV}' APP_URL='${APP_URL}' bash -s"
+
+      - name: Deploy
+        if: env.MODE == 'deploy' || env.MODE == 'bootstrap-deploy'
+        run: |
+          bootstrap=false
+          [ "$MODE" = "bootstrap-deploy" ] && bootstrap=true
+          cat scripts/deploy/common.sh scripts/deploy/remote_deploy.sh \
+            | ssh server "APP_ROOT='${APP_ROOT}' APP_VENV='${APP_VENV}' DEPLOY_REF='${DEPLOY_REF}' BOOTSTRAP='${bootstrap}' bash -s"
+
+      - name: Server check after deploy
+        if: env.MODE == 'deploy' || env.MODE == 'bootstrap-deploy'
+        run: |
+          cat scripts/deploy/common.sh scripts/deploy/remote_check.sh \
+            | ssh server "APP_ROOT='${APP_ROOT}' APP_VENV='${APP_VENV}' APP_URL='${APP_URL}' bash -s"
+
+      - name: Diagnose SSH failure
+        if: failure()
+        run: |
+          port="${SSH_PORT:-22}"
+          lines="Target port: $port"
+          if timeout 10 bash -c "</dev/tcp/$SSH_HOST/$port" 2>/dev/null; then
+            lines="$lines%0ATCP: port $port is reachable"
+          else
+            lines="$lines%0ATCP: cannot reach port $port"
+          fi
+          if [ -f ~/.ssh/deploy_key ] && ssh-keygen -y -P "" -f ~/.ssh/deploy_key >/dev/null 2>&1; then
+            lines="$lines%0AKey: readable"
+          else
+            lines="$lines%0AKey: cannot be read (passphrase, format, or incomplete paste)"
+          fi
+          if ssh -o ConnectTimeout=15 server true 2>/dev/null; then
+            lines="$lines%0ASSH login: works (the failure happened in a later step)"
+          else
+            lines="$lines%0ASSH login: failed"
+          fi
+          echo "::warning title=SSH diagnosis::$lines"
+
+      - name: Remove key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

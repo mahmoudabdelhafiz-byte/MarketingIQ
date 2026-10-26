@@ -88,9 +88,11 @@ schema.
 - [Development workflow](docs/development-workflow.md)
 - [Deployment configuration preflight](docs/deployment-preflight.md)
 - [cPanel Passenger deployment](docs/cpanel-passenger.md)
+- [Deploying from GitHub Actions](docs/deployment-github-actions.md)
 - [Database backup and restore readiness](docs/database-backup-restore.md)
 - [Sprint boundaries](docs/sprint-boundaries.md)
 - [Company repository and CSV import](docs/company-repository.md)
+- [AI provider selection (OpenAI, Claude, DeepSeek)](docs/ai-providers.md)
 - [ADR 0001: modular monolith and shared company identity](docs/adr/0001-foundation.md)
 - [ADR 0002: MySQL production database for shared hosting](docs/adr/0002-mysql-shared-hosting.md)
 
