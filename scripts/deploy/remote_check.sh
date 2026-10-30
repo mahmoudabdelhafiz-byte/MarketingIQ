@@ -174,14 +174,6 @@ if [ -n "$public_url" ]; then
   fi
 fi
 
-annotate notice "Server check" "${report[@]}"
-if [ "${#warnings[@]}" -gt 0 ]; then
-  annotate warning "Needs attention" "${warnings[@]}"
-fi
-printf '%s\n' "${report[@]}"
-[ "${#warnings[@]}" -eq 0 ] || printf 'WARNING: %s\n' "${warnings[@]}"
-exit 0
-
 # TEMPORARY diagnostics (never merged): why contacts are blocked. Counts and kinds only.
 diag=$(
   load_cpanel_env
@@ -222,3 +214,11 @@ with Session(create_database_engine()) as s:
 PY
 )
 annotate notice "Diagnostics" "$diag"
+
+annotate notice "Server check" "${report[@]}"
+if [ "${#warnings[@]}" -gt 0 ]; then
+  annotate warning "Needs attention" "${warnings[@]}"
+fi
+printf '%s\n' "${report[@]}"
+[ "${#warnings[@]}" -eq 0 ] || printf 'WARNING: %s\n' "${warnings[@]}"
+exit 0
