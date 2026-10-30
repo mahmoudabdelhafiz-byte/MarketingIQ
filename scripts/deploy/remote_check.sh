@@ -181,3 +181,44 @@ fi
 printf '%s\n' "${report[@]}"
 [ "${#warnings[@]}" -eq 0 ] || printf 'WARNING: %s\n' "${warnings[@]}"
 exit 0
+
+# TEMPORARY diagnostics (never merged): why contacts are blocked. Counts and kinds only.
+diag=$(
+  load_cpanel_env
+  . "$APP_VENV"
+  cd "$APP_ROOT"
+  python - <<'PY' 2>&1 | tail -n 25
+from collections import Counter
+from sqlalchemy import select, func
+from marketingiq.infrastructure.database import create_database_engine
+from sqlalchemy.orm import Session
+import marketingiq.domain.campaigns  # noqa
+from marketingiq.domain.models import ICP, ICPCriterion, LeadQualification, ProductFitAssessment, CompanyFact, OrganizationCompany, Product
+
+with Session(create_database_engine()) as s:
+    for p in s.scalars(select(Product)):
+        icp = s.scalar(select(ICP).where(ICP.product_id == p.id, ICP.is_active.is_(True)).order_by(ICP.version.desc()))
+        crit = [] if icp is None else [f"{c.kind}{'*' if c.required else ''}(w{c.weight})" for c in icp.criteria]
+        print(f"product#{p.id[:4]} status={p.status.value} buyer_roles={len(p.primary_buyer_roles or [])} icp={'v'+str(icp.version) if icp else 'none'} emp={icp.employee_min if icp else None}-{icp.employee_max if icp else None} criteria={' '.join(crit) or 'none'}")
+    print("companies:", s.scalar(select(func.count(OrganizationCompany.id))))
+    latest = {}
+    for q in s.scalars(select(LeadQualification).order_by(LeadQualification.qualified_at)):
+        latest[(q.organization_company_id, q.product_id)] = q
+    print("latest qualification status:", dict(Counter(q.status.value for q in latest.values())))
+    gaps = Counter()
+    for q in latest.values():
+        for g in (q.research_gaps or []):
+            gaps[(g.get("code"), g.get("fact_key"))] += 1
+    print("research gaps:", dict(gaps.most_common(8)))
+    results = Counter()
+    for a in s.scalars(select(ProductFitAssessment)):
+        for c in (a.explanation or {}).get("criteria", []):
+            results[(c.get("type"), c.get("result"))] += 1
+    print("fit criterion results:", dict(results.most_common(12)))
+    keys = Counter(r[0] for r in s.execute(select(CompanyFact.fact_key)))
+    print("fact keys stored:", dict(keys.most_common(12)))
+    cov = [a.evidence_coverage for a in s.scalars(select(ProductFitAssessment))]
+    print("coverage: n=%d avg=%s" % (len(cov), round(sum(cov)/len(cov)) if cov else None))
+PY
+)
+annotate notice "Diagnostics" "$diag"
