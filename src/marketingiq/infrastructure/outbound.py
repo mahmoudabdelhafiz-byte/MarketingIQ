@@ -61,7 +61,8 @@ class SMTPEmailSender:
 
     @property
     def configured(self) -> bool:
-        return bool(self.host and self.from_email)
+        # A host that looks like an email address (a common cPanel mix-up) cannot be reached.
+        return bool(self.host and self.from_email and "@" not in self.host)
 
     def send(self, message: OutboundMessage) -> OutboundSendResult:
         if not self.configured:
