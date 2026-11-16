@@ -22,6 +22,11 @@ Discover (free, no credits), on demand or on a schedule, adds them as `discovere
 research → fit → qualification on each. See [Company discovery](docs/company-discovery.md). Scheduled
 rules need the cron lines in [cPanel Passenger deployment](docs/cpanel-passenger.md).
 
+## Draft language
+
+Drafts are written in the recipient's language: automatically from the company's country (Arabic
+for Arab countries) or as chosen when drafting. See [Grounded AI campaigns](docs/grounded-ai-campaigns.md#draft-language).
+
 ## Follow-ups
 
 When sending an approved email you can schedule up to 2 follow-ups in the same thread (after 3

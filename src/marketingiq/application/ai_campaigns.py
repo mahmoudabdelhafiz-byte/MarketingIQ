@@ -13,6 +13,13 @@ from marketingiq.application.campaigns import (
 )
 from marketingiq.application.decision_makers import targeting_block_reason
 from marketingiq.application.errors import ConflictError, NotFoundError
+from marketingiq.application.languages import (
+    AUTO,
+    LANGUAGES,
+    language_name,
+    pack,
+    resolve_language,
+)
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.campaign_ai import (
     CampaignAIAttemptStatus,
@@ -60,6 +67,7 @@ class GroundedAICampaignService:
         *,
         call_to_action: str | None = None,
         fallback_to_deterministic: bool = True,
+        language: str | None = None,
     ) -> CampaignDraft:
         require_permission(self.tenant, Permission.GENERATE_CAMPAIGN_DRAFT)
         relationship = self.base._relationship(relationship_id)
@@ -80,7 +88,11 @@ class GroundedAICampaignService:
         company = self.session.get(Company, relationship.company_id)
         if company is None:
             raise NotFoundError("Company not found")
-        cta = (call_to_action or DEFAULT_CTA).strip()
+        try:
+            draft_language = resolve_language(language, company.country_code)
+        except ValueError as error:
+            raise ConflictError("CAMPAIGN_DRAFT_LANGUAGE_UNSUPPORTED") from error
+        cta = (call_to_action or pack(draft_language).default_cta).strip()
         self.base._validate_content("placeholder", "placeholder", cta, allow_placeholders=True)
 
         facts = self._approved_grounding_facts(qualification.fit_assessment_id)
@@ -92,6 +104,8 @@ class GroundedAICampaignService:
             value_proposition=product.value_proposition.strip(),
             call_to_action=cta,
             grounding_facts=tuple(facts),
+            language=draft_language,
+            language_name=language_name(draft_language),
         )
         attempt = CampaignAIGenerationAttempt(
             organization_id=self.tenant.organization_id,
@@ -113,7 +127,9 @@ class GroundedAICampaignService:
 
         try:
             result = self.provider.generate(request)
-            self._validate_ai_result(result.subject, result.body, result.used_fact_keys, facts)
+            self._validate_ai_result(
+                result.subject, result.body, result.used_fact_keys, facts, draft_language
+            )
         except CampaignAIProviderError as error:
             return self._fallback_or_raise(
                 attempt,
@@ -123,6 +139,8 @@ class GroundedAICampaignService:
                 cta,
                 fallback_to_deterministic,
                 error.category,
+                draft_language,
+                language,
             )
         except ValueError:
             return self._fallback_or_raise(
@@ -133,6 +151,8 @@ class GroundedAICampaignService:
                 cta,
                 fallback_to_deterministic,
                 "GROUNDING_VALIDATION_FAILED",
+                draft_language,
+                language,
             )
 
         draft = CampaignDraft(
@@ -156,6 +176,8 @@ class GroundedAICampaignService:
                 "recommended_buyer_role": qualification.recommended_buyer_role,
                 "buyer_role_match": contact.buyer_role_match.value,
                 "generation_mode": "AI_ASSISTED",
+                "language": draft_language,
+                "requested_language": language or AUTO,
             },
             evidence_snapshot={
                 "fit_assessment_id": qualification.fit_assessment_id,
@@ -230,8 +252,11 @@ class GroundedAICampaignService:
         body: str,
         used_fact_keys: tuple[str, ...],
         facts: list[GroundingFact],
+        language: str = "en",
     ) -> None:
         self.base._validate_content(subject, body, DEFAULT_CTA)
+        if language == "ar" and not any("\u0600" <= char <= "\u06ff" for char in body):
+            raise ValueError("AI output is not in the requested language")
         allowed = {fact.fact_key for fact in facts}
         if not set(used_fact_keys).issubset(allowed):
             raise ValueError("AI referenced unsupported grounding keys")
@@ -241,6 +266,12 @@ class GroundedAICampaignService:
             "your budget",
             "urgent need",
             "guaranteed",
+            "ميزانيتكم",
+            "ميزانيتك",
+            "مشروعكم الحالي",
+            "حاجة عاجلة",
+            "مضمون",
+            "نضمن",
         )
         combined = f"{subject}\n{body}".lower()
         if any(marker in combined for marker in forbidden):
@@ -255,6 +286,8 @@ class GroundedAICampaignService:
         cta: str,
         fallback: bool,
         category: str,
+        draft_language: str = "en",
+        requested_language: str | None = None,
     ) -> CampaignDraft:
         attempt.error_category = category
         attempt.completed_at = self.now
@@ -270,8 +303,15 @@ class GroundedAICampaignService:
             relationship_id,
             qualification_id,
             contact_id,
-            call_to_action=cta,
+            # Languages without a reviewed template fall back to the English one.
+            call_to_action=cta if draft_language in LANGUAGES else None,
+            language=draft_language,
         )
+        if requested_language:
+            draft.personalization_snapshot = {
+                **(draft.personalization_snapshot or {}),
+                "requested_language": requested_language,
+            }
         attempt.draft_id = draft.id
         self.session.flush()
         return draft

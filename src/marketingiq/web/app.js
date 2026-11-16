@@ -33,6 +33,7 @@
     OUTBOUND_QUALIFICATION_NOT_ACTIONABLE: "The lead is not qualified for outreach.",
     OUTBOUND_BUYER_ROLE_ALIGNMENT_REQUIRED: "The contact does not match the recommended buyer role.",
     OUTBOUND_IDEMPOTENCY_KEY_REUSED: "Send request conflicted with another draft. Try again.",
+    CAMPAIGN_DRAFT_LANGUAGE_UNSUPPORTED: "That draft language is not supported.",
     CAMPAIGN_DRAFT_VERIFIED_EMAIL_REQUIRED: "Verify the contact's email before drafting a campaign.",
     CAMPAIGN_DRAFT_VALUE_PROPOSITION_REQUIRED:
       "Add a value proposition to the product before drafting campaigns.",
@@ -2170,11 +2171,13 @@
     qualSelect.addEventListener("change", fillContacts);
     fillContacts();
     const cta = input({ maxlength: 500, placeholder: "e.g. Book a 20-minute demo next week" });
+    const language = select(DRAFT_LANGUAGES, { value: state.draftLanguage || "auto" });
+    language.addEventListener("change", () => (state.draftLanguage = language.value));
 
     const generate = (useAi, button) =>
       run(button, async () => {
         if (!contactSelect.value) throw new ApiError(0, "Choose a contact first.");
-        const body = { qualification_id: qualSelect.value, contact_id: contactSelect.value, call_to_action: cta.value.trim() || null };
+        const body = { qualification_id: qualSelect.value, contact_id: contactSelect.value, call_to_action: cta.value.trim() || null, language: language.value };
         const draft = useAi
           ? await post(`${base}/campaign-drafts/ai`, { ...body, fallback_to_deterministic: true })
           : await post(`${base}/campaign-drafts`, { ...body, channel: "EMAIL" });
@@ -2197,7 +2200,8 @@
           ? h("div", { class: "empty" }, "Qualify the company and find contacts first.")
           : [
               h("div", { class: "form-grid" }, field("Qualification", qualSelect), h("div", null, field("Contact", contactSelect), readinessBox)),
-              field("Call to action (optional)", cta),
+              h("div", { class: "form-grid" }, field("Call to action (optional)", cta), field("Language", language)),
+              h("p", { class: "muted small" }, "Auto writes in the company's language: Arabic for Arab countries, French, Spanish, German, Turkish, Portuguese or Italian where they apply, otherwise English. Arabic and English have a non-AI template; other languages need AI."),
               h(
                 "div",
                 { class: "row" },
@@ -2309,7 +2313,7 @@
         "div",
         { class: "card-head" },
         h("h2", null, "Review draft"),
-        h("div", { class: "row" }, badge(draft.status), h("span", { class: "muted small" }, `Revision ${draft.revision_number} · to ${contactName(draft.contact_id)}`)),
+        h("div", { class: "row" }, badge(draft.status), h("span", { class: "badge" }, LANGUAGE_NAMES[draft.language] || draft.language || "English"), h("span", { class: "muted small" }, `Revision ${draft.revision_number} · to ${contactName(draft.contact_id)}`)),
       ),
       locked
         ? h("div", null, h("div", { class: "email-preview" }, h("strong", null, draft.subject), "\n\n", draft.body))
@@ -2403,6 +2407,19 @@
       ),
     );
   }
+
+  const DRAFT_LANGUAGES = [
+    { value: "auto", label: "Auto (company's country)" },
+    { value: "en", label: "English" },
+    { value: "ar", label: "Arabic — العربية" },
+    { value: "fr", label: "French (AI)" },
+    { value: "es", label: "Spanish (AI)" },
+    { value: "de", label: "German (AI)" },
+    { value: "tr", label: "Turkish (AI)" },
+    { value: "pt", label: "Portuguese (AI)" },
+    { value: "it", label: "Italian (AI)" },
+  ];
+  const LANGUAGE_NAMES = { en: "English", ar: "Arabic", fr: "French", es: "Spanish", de: "German", tr: "Turkish", pt: "Portuguese", it: "Italian" };
 
   const FOLLOW_UP_REASONS = {
     CONVERSATION_REPLIED: "they replied",

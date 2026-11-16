@@ -27,7 +27,7 @@ from marketingiq.infrastructure.llm_clients import (
     extract_json_object,
 )
 
-PROMPT_VERSION = "grounded-campaign-ai-v1"
+PROMPT_VERSION = "grounded-campaign-ai-v2"
 DEFAULT_MODEL = DEFAULT_MODELS[(AIFeature.CAMPAIGN, AIProviderName.OPENAI)]
 RESPONSES_URL = OPENAI_RESPONSES_URL
 MAX_OUTPUT_TOKENS = 900
@@ -102,6 +102,7 @@ def request_fingerprint(request: CampaignAIRequest) -> str:
         "product_name": request.product_name,
         "value_proposition": request.value_proposition,
         "call_to_action": request.call_to_action,
+        "language": request.language,
         "facts": [(fact.fact_key, fact.value) for fact in request.grounding_facts],
     }
     return hashlib.sha256(
@@ -129,6 +130,14 @@ def _prompt(request: CampaignAIRequest) -> str:
                 "new capabilities."
             ),
             "Keep the tone professional, specific, and non-manipulative.",
+            (
+                f"Write the subject and body in {request.language_name}, in a natural, "
+                "professional business register for that language (not a literal translation)."
+            ),
+            (
+                "Keep company names, product names and person names exactly as supplied; "
+                "translate the call to action into that language if it is not already in it."
+            ),
             "Return JSON only with keys subject, body, used_fact_keys.",
             "used_fact_keys must contain only keys actually referenced in the copy.",
         ],
@@ -138,6 +147,7 @@ def _prompt(request: CampaignAIRequest) -> str:
         "product_name": request.product_name,
         "product_value_proposition": request.value_proposition,
         "call_to_action": request.call_to_action,
+        "language": request.language_name,
         "approved_facts": facts,
     }
     return json.dumps(instructions, ensure_ascii=False, separators=(",", ":"))

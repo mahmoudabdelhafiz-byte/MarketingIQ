@@ -9,6 +9,13 @@ from marketingiq.application.authorization import Permission, require_permission
 from marketingiq.application.decision_makers import targeting_block_reason
 from marketingiq.application.errors import ConflictError, NotFoundError
 from marketingiq.application.fit_freshness import FitAssessmentFreshnessService
+from marketingiq.application.languages import (
+    AUTO,
+    DEFAULT_LANGUAGE,
+    LANGUAGES,
+    pack,
+    resolve_language,
+)
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.campaigns import (
     CampaignChannel,
@@ -33,6 +40,7 @@ from marketingiq.domain.models import (
 )
 
 WORKFLOW_VERSION = "deterministic-campaign-draft-v1"
+
 DEFAULT_CTA = (
     "Would a 20-minute conversation be useful to explore whether this could fit your priorities?"
 )
@@ -62,6 +70,7 @@ class CampaignDraftService:
         contact_id: str,
         channel: CampaignChannel = CampaignChannel.EMAIL,
         call_to_action: str | None = None,
+        language: str | None = None,
     ) -> CampaignDraft:
         require_permission(self.tenant, Permission.GENERATE_CAMPAIGN_DRAFT)
         if channel != CampaignChannel.EMAIL:
@@ -82,14 +91,22 @@ class CampaignDraftService:
         if not self._has_verified_email(contact.id):
             raise ConflictError("CAMPAIGN_DRAFT_VERIFIED_EMAIL_REQUIRED")
 
-        cta = (call_to_action or DEFAULT_CTA).strip()
-        self._validate_content("placeholder", "placeholder", cta, allow_placeholders=True)
-
         company = self.session.get(Company, relationship.company_id)
         if company is None:
             raise NotFoundError("Company not found")
+        try:
+            draft_language = resolve_language(language, company.country_code)
+        except ValueError as error:
+            raise ConflictError("CAMPAIGN_DRAFT_LANGUAGE_UNSUPPORTED") from error
+        # The fixed template exists only for languages with a reviewed phrase pack.
+        template_language = draft_language if draft_language in LANGUAGES else DEFAULT_LANGUAGE
 
-        subject, body = self._compose(company.canonical_name, product, contact, cta)
+        cta = (call_to_action or pack(template_language).default_cta).strip()
+        self._validate_content("placeholder", "placeholder", cta, allow_placeholders=True)
+
+        subject, body = self._compose(
+            company.canonical_name, product, contact, cta, template_language
+        )
         positive_criteria = sorted(
             {
                 str(item.get("criterion_id"))
@@ -125,6 +142,8 @@ class CampaignDraftService:
                 "recommended_buyer_role": qualification.recommended_buyer_role,
                 "buyer_role_match": contact.buyer_role_match.value,
                 "qualification_status": qualification.status.value,
+                "language": template_language,
+                "requested_language": language or AUTO,
             },
             evidence_snapshot={
                 "fit_assessment_id": qualification.fit_assessment_id,
@@ -482,26 +501,27 @@ class CampaignDraftService:
         product: Product,
         contact: ContactCandidate,
         call_to_action: str,
+        language: str = DEFAULT_LANGUAGE,
     ) -> tuple[str, str]:
-        greeting = f"Hi {contact.first_name.strip()}," if contact.first_name else "Hello,"
+        phrases = pack(language)
+        first_name = (contact.first_name or "").strip()
+        greeting = (
+            phrases.greeting_named.format(first_name=first_name) if first_name else phrases.greeting
+        )
         if contact.job_title:
-            relevance = (
-                f"Given your role as {contact.job_title.strip()} at {company_name}, "
-                f"I thought {product.name} may be relevant."
+            relevance = phrases.relevance_with_title.format(
+                job_title=contact.job_title.strip(), company=company_name, product=product.name
             )
         else:
-            relevance = (
-                f"Given your work at {company_name}, "
-                f"I thought {product.name} may be relevant."
-            )
-        subject = f"{product.name} for {company_name}"
+            relevance = phrases.relevance.format(company=company_name, product=product.name)
+        subject = phrases.subject.format(product=product.name, company=company_name)[:255]
         body = "\n\n".join(
             [
                 greeting,
                 relevance,
                 product.value_proposition.strip(),
                 call_to_action,
-                "Best regards,",
+                phrases.closing,
             ]
         )
         return subject, body

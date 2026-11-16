@@ -10,6 +10,7 @@ from marketingiq.application.authorization import Permission, require_permission
 from marketingiq.application.decision_makers import targeting_block_reason
 from marketingiq.application.errors import ConflictError, NotFoundError
 from marketingiq.application.fit_freshness import FitAssessmentFreshnessService
+from marketingiq.application.languages import draft_language
 from marketingiq.application.tenant import TenantContext
 from marketingiq.application.unsubscribe import UnsubscribeLinks
 from marketingiq.domain.campaigns import (
@@ -156,6 +157,7 @@ class OutboundSendService:
                     subject=approval.subject,
                     body=approval.body,
                     idempotency_key=clean_key,
+                    language=draft_language(draft.personalization_snapshot),
                     unsubscribe_url=(
                         self.unsubscribe_links.url(self.tenant.organization_id, email.email)
                         if self.unsubscribe_links is not None
