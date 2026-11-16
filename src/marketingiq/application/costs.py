@@ -144,6 +144,8 @@ class CostReportService:
             self._line("AI web searches", usage["ai_web_searches"], "search",
                        prices["web_search_cost"]),
         ]  # fmt: skip
+        # Hunter does not report credits per request: those requests count as one credit each.
+        cost_lines[0]["estimated_quantity"] = usage["provider_credits_estimated"]
         fixed = Decimal(str(prices["monthly_fixed_cost"] or 0)) * Decimal(days) / Decimal(30)
         cost_lines.append(
             {
@@ -195,12 +197,21 @@ class CostReportService:
         }
 
     def _usage(self, org: str, start: datetime, end: datetime) -> dict[str, int]:
+        paid = (
+            ProviderUsage.organization_id == org,
+            ProviderUsage.requested_at >= start,
+            ProviderUsage.requested_at < end,
+            ProviderUsage.cache_hit.is_(False),
+        )
         credits = self.session.scalar(
-            select(func.coalesce(func.sum(ProviderUsage.credits_used), 0)).where(
-                ProviderUsage.organization_id == org,
-                ProviderUsage.requested_at >= start,
-                ProviderUsage.requested_at < end,
-                ProviderUsage.cache_hit.is_(False),
+            select(func.coalesce(func.sum(ProviderUsage.credits_used), 0)).where(*paid)
+        )
+        # Hunter does not report credits per request; count each successful paid request as one.
+        estimated = self.session.scalar(
+            select(func.count(ProviderUsage.id)).where(
+                *paid,
+                ProviderUsage.credits_used.is_(None),
+                ProviderUsage.success.is_(True),
             )
         )
         campaign_in, campaign_out, campaign_calls = self.session.execute(
@@ -235,7 +246,8 @@ class CostReportService:
             tokens_in += _int(data.get("input_tokens"))
             tokens_out += _int(data.get("output_tokens"))
         return {
-            "provider_credits": int(credits or 0),
+            "provider_credits": int(credits or 0) + int(estimated or 0),
+            "provider_credits_estimated": int(estimated or 0),
             "ai_input_tokens": int(campaign_in or 0) + tokens_in,
             "ai_output_tokens": int(campaign_out or 0) + tokens_out,
             "ai_web_searches": searches,

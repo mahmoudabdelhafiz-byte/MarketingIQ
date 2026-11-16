@@ -10,6 +10,7 @@ from marketingiq.application.authorization import Permission, require_permission
 from marketingiq.application.decision_makers import targeting_block_reason
 from marketingiq.application.errors import ConflictError, NotFoundError
 from marketingiq.application.fit_freshness import FitAssessmentFreshnessService
+from marketingiq.application.follow_up_stops import stop_pending_follow_ups
 from marketingiq.application.languages import draft_language
 from marketingiq.application.tenant import TenantContext
 from marketingiq.application.unsubscribe import UnsubscribeLinks
@@ -226,6 +227,14 @@ class OutboundSendService:
         )
         self.session.add(entry)
         self.session.flush()
+        stop_pending_follow_ups(
+            self.session,
+            "RECIPIENT_SUPPRESSED",
+            organization_id=self.tenant.organization_id,
+            email=normalized,
+            actor_user_id=self.tenant.actor_user_id,
+            now=self.now,
+        )
         self.session.add(
             AuditLog(
                 organization_id=self.tenant.organization_id,

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from marketingiq.application.authorization import Permission, require_permission
 from marketingiq.application.errors import ConflictError, NotFoundError
+from marketingiq.application.follow_up_stops import stop_pending_follow_ups
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.campaigns import CampaignDraft
 from marketingiq.domain.engagement import (
@@ -97,6 +98,13 @@ class OutreachEngagementService:
         )
         self.session.add(event)
         self.session.flush()
+        if event_type != EngagementEventType.DELIVERED:
+            stop_pending_follow_ups(
+                self.session,
+                f"CONVERSATION_{event_type.value}",
+                attempt_id=attempt.id,
+                now=self.now,
+            )
 
         if event_type in _SUPPRESSION_EVENTS:
             _suppress_recipient(
@@ -330,6 +338,13 @@ class ProviderEngagementIngestionService:
         )
         self.session.add(event)
         self.session.flush()
+        if event_type != EngagementEventType.DELIVERED:
+            stop_pending_follow_ups(
+                self.session,
+                f"CONVERSATION_{event_type.value}",
+                attempt_id=attempt.id,
+                now=self.now,
+            )
 
         if event_type in _SUPPRESSION_EVENTS:
             _suppress_recipient(
