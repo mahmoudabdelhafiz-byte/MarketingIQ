@@ -27,6 +27,12 @@ rules need the cron lines in [cPanel Passenger deployment](docs/cpanel-passenger
 Drafts are written in the recipient's language: automatically from the company's country (Arabic
 for Arab countries) or as chosen when drafting. See [Grounded AI campaigns](docs/grounded-ai-campaigns.md#draft-language).
 
+## Your own contact lists
+
+**Companies → Import contacts** adds people from your own CSV lists; their companies are added and
+the people join decision-maker discovery once the company is qualified, with the same role and
+email checks. See [Importing your own contact lists](docs/contact-import.md).
+
 ## Costs
 
 **Costs** estimates spend per lead, reply and meeting from recorded usage (Hunter credits, AI tokens,
