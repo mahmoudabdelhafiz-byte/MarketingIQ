@@ -22,6 +22,13 @@ Discover (free, no credits), on demand or on a schedule, adds them as `discovere
 research → fit → qualification on each. See [Company discovery](docs/company-discovery.md). Scheduled
 rules need the cron lines in [cPanel Passenger deployment](docs/cpanel-passenger.md).
 
+## Follow-ups
+
+When sending an approved email you can schedule up to 2 follow-ups in the same thread (after 3
+and 7 days). They stop automatically on any reply, bounce, unsubscribe or suppression, and are
+either queued on the **Follow-ups** page for approval or sent automatically inside working hours
+with a daily cap. See [Follow-ups](docs/follow-ups.md).
+
 ## Decision-maker discovery
 
 For a qualified company, **Decision makers** finds the best 1–3 people for each of a product's

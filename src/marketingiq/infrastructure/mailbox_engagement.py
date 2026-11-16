@@ -258,6 +258,20 @@ class MailboxEngagementIngestor:
             )
         )
         unique = {item.id: item for item in attempts}
+        if not unique:
+            from marketingiq.domain.follow_ups import OutboundFollowUp
+
+            original_ids = set(
+                self.session.scalars(
+                    select(OutboundFollowUp.initial_attempt_id).where(
+                        OutboundFollowUp.provider_message_id.in_(reference_message_ids)
+                    )
+                )
+            )
+            if len(original_ids) == 1:
+                original = self.session.get(OutboundSendAttempt, next(iter(original_ids)))
+                if original is not None and original.status == OutboundSendStatus.SENT:
+                    unique = {original.id: original}
         if len(unique) != 1:
             return None
         return next(iter(unique.values()))
