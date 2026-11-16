@@ -121,8 +121,15 @@ jobs:
               cur.execute("GRANT ALL ON marketingiq_test.* TO 'marketingiq'@'%'")
           c.commit()
           PY
-      - name: Alembic upgrade to head on MariaDB
-        run: DATABASE_URL="$TEST_DATABASE_URL" alembic upgrade head
+      - name: Alembic upgrade to head on MariaDB (counting foreign keys across the utf8mb4 conversion)
+        run: |
+          count() { python -c "import pymysql; c=pymysql.connect(host='127.0.0.1', user='marketingiq', password='marketingiq_test', database='marketingiq_test'); cur=c.cursor(); cur.execute('SELECT COUNT(*) FROM information_schema.referential_constraints WHERE constraint_schema = DATABASE()'); print(cur.fetchone()[0])"; }
+          DATABASE_URL="$TEST_DATABASE_URL" alembic upgrade 20261120_25
+          before=$(count)
+          DATABASE_URL="$TEST_DATABASE_URL" alembic upgrade head
+          after=$(count)
+          echo "Foreign keys: $before before, $after after"
+          test "$before" -gt 0 && test "$before" = "$after"
       - name: Every table stores Arabic (utf8mb4)
         run: |
           python - <<'PY'

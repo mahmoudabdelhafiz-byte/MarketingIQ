@@ -39,15 +39,65 @@ def upgrade() -> None:
     ]
     if not tables:
         return
-    # Foreign-key columns must share a character set; convert with checks off, then restore.
+
+    # MariaDB will not change the character set of a column used in a foreign key, even with
+    # FOREIGN_KEY_CHECKS = 0. Drop every foreign key, convert, then recreate them unchanged.
+    foreign_keys = _foreign_keys(bind)
     bind.exec_driver_sql("SET FOREIGN_KEY_CHECKS = 0")
     try:
+        for fk in foreign_keys:
+            bind.exec_driver_sql(
+                f"ALTER TABLE `{fk['table']}` DROP FOREIGN KEY `{fk['name']}`"
+            )
         for table in tables:
             bind.exec_driver_sql(
                 f"ALTER TABLE `{table}` CONVERT TO CHARACTER SET {CHARSET} COLLATE {COLLATION}"
             )
+        for fk in foreign_keys:
+            columns = ", ".join(f"`{c}`" for c in fk["columns"])
+            targets = ", ".join(f"`{c}`" for c in fk["ref_columns"])
+            bind.exec_driver_sql(
+                f"ALTER TABLE `{fk['table']}` ADD CONSTRAINT `{fk['name']}` "
+                f"FOREIGN KEY ({columns}) REFERENCES `{fk['ref_table']}` ({targets}) "
+                f"ON DELETE {fk['on_delete']} ON UPDATE {fk['on_update']}"
+            )
     finally:
         bind.exec_driver_sql("SET FOREIGN_KEY_CHECKS = 1")
+
+
+def _foreign_keys(bind) -> list[dict]:
+    rules = {
+        (row[0], row[1]): (row[2], row[3], row[4])
+        for row in bind.exec_driver_sql(
+            "SELECT table_name, constraint_name, referenced_table_name, delete_rule, update_rule "
+            "FROM information_schema.referential_constraints "
+            "WHERE constraint_schema = DATABASE()"
+        )
+    }
+    columns: dict[tuple[str, str], list[tuple[int, str, str]]] = {}
+    for table, name, column, ref_column, position in bind.exec_driver_sql(
+        "SELECT table_name, constraint_name, column_name, referenced_column_name, "
+        "ordinal_position FROM information_schema.key_column_usage "
+        "WHERE table_schema = DATABASE() AND referenced_table_name IS NOT NULL"
+    ):
+        columns.setdefault((table, name), []).append((position, column, ref_column))
+    result = []
+    for (table, name), (ref_table, on_delete, on_update) in sorted(rules.items()):
+        parts = sorted(columns.get((table, name), []))
+        if not parts:
+            continue
+        result.append(
+            {
+                "table": table,
+                "name": name,
+                "ref_table": ref_table,
+                "columns": [p[1] for p in parts],
+                "ref_columns": [p[2] for p in parts],
+                "on_delete": on_delete,
+                "on_update": on_update,
+            }
+        )
+    return result
 
 
 def downgrade() -> None:
