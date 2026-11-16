@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from marketingiq.application.authorization import Permission, require_permission
+from marketingiq.application.authorization import (
+    ROLE_PERMISSIONS,
+    Permission,
+    require_permission,
+)
 from marketingiq.application.contacts import ContactDiscoveryService
 from marketingiq.application.decision_makers import DecisionMakerService
 from marketingiq.application.errors import ConflictError, NotFoundError
@@ -25,6 +30,7 @@ from marketingiq.domain.models import (
     ProductFitAssessment,
     QualificationStatus,
     ResearchMode,
+    ResearchRun,
 )
 
 WORKFLOW_VERSION = "guarded-orchestration-v1"
@@ -108,13 +114,23 @@ class AutomationOrchestrationService:
         }:
             needs_research = True
 
+        external = self._external_research_state(relationship.company_id)
+        research_reason = (
+            "Refresh public evidence before downstream decisions"
+            if needs_research
+            else "Current fit inputs do not require a public research refresh"
+        )
+        if needs_research and external == "AVAILABLE":
+            research_reason += (
+                ". With provider credits allowed, Hunter company research also fills "
+                "industry, country and company size"
+            )
         steps.append(
             self._step(
                 OrchestrationStep.RESEARCH_PUBLIC,
                 "READY" if needs_research else "OPTIONAL",
-                "Refresh public evidence before downstream decisions"
-                if needs_research
-                else "Current fit inputs do not require a public research refresh",
+                research_reason,
+                requires_provider_credits=needs_research and external == "AVAILABLE",
             )
         )
         steps.append(
@@ -206,8 +222,28 @@ class AutomationOrchestrationService:
             if actionable and contact_count > 0
             else "IN_PROGRESS"
         )
+        hint = None
+        if qualification is not None and qualification.status.value == "NEEDS_MORE_RESEARCH":
+            hint = {
+                "AVAILABLE": (
+                    "Public sources did not give the facts your ICP checks. Tick "
+                    "\"Allow provider credits\" and run safe steps: Hunter company research "
+                    "fills company size, industry and country."
+                ),
+                "RECENT": (
+                    "Hunter company research already ran and the ICP still cannot be scored. "
+                    "Add the missing facts on the Research tab, or adjust the ICP's criteria."
+                ),
+                "UNAVAILABLE": (
+                    "Public sources did not give the facts your ICP checks. Hunter company "
+                    "research needs HUNTER_API_KEY and an organization admin; otherwise add "
+                    "the missing facts on the Research tab."
+                ),
+            }[external]
         return {
             "workflow_version": WORKFLOW_VERSION,
+            "next_action_hint": hint,
+            "external_research": external,
             "organization_id": self.tenant.organization_id,
             "relationship_id": relationship.id,
             "company_id": relationship.company_id,
@@ -245,9 +281,19 @@ class AutomationOrchestrationService:
         self._relationship(relationship_id)
         self._product(product_id)
         if step == OrchestrationStep.RESEARCH_PUBLIC:
+            relationship = self._relationship(relationship_id)
+            # Public sources rarely state industry, country or headcount. When the caller
+            # explicitly allows provider credits, also ask Hunter (cached by the research
+            # service's freshness window, so repeated runs do not spend again).
+            mode = (
+                ResearchMode.PUBLIC_THEN_EXTERNAL
+                if allow_provider_credits
+                and self._external_research_state(relationship.company_id) == "AVAILABLE"
+                else ResearchMode.PUBLIC_ONLY
+            )
             result = CompanyResearchService(
                 self.session, self.tenant, self.provider_registry
-            ).run(relationship_id, mode=ResearchMode.PUBLIC_ONLY, force_refresh=False)
+            ).run(relationship_id, mode=mode, force_refresh=False)
             result_id = result.id
         elif step == OrchestrationStep.ASSESS_FIT:
             icp = self._active_icp(product_id)
@@ -441,6 +487,40 @@ class AutomationOrchestrationService:
             "reason": reason,
             "requires_provider_credits": requires_provider_credits,
         }
+
+    def _external_research_state(self, company_id: str) -> str:
+        """AVAILABLE, RECENT (already done within the freshness window) or UNAVAILABLE."""
+
+        if Permission.RUN_EXTERNAL_RESEARCH not in ROLE_PERMISSIONS.get(self.tenant.role, ()):
+            return "UNAVAILABLE"
+        try:
+            hunter = self.provider_registry.get("HUNTER")
+        except ValueError:
+            return "UNAVAILABLE"
+        if not hunter.configured:
+            return "UNAVAILABLE"
+        window = CompanyResearchService(
+            self.session, self.tenant, self.provider_registry
+        ).external_freshness
+        since = datetime.now(UTC) - window
+        recent = self.session.scalars(
+            select(ResearchRun)
+            .where(
+                ResearchRun.organization_id == self.tenant.organization_id,
+                ResearchRun.company_id == company_id,
+                ResearchRun.mode != ResearchMode.PUBLIC_ONLY,
+                ResearchRun.completed_at.is_not(None),
+            )
+            .order_by(ResearchRun.completed_at.desc())
+            .limit(5)
+        )
+        for run in recent:
+            completed = run.completed_at
+            if completed.tzinfo is None:
+                completed = completed.replace(tzinfo=UTC)
+            if completed >= since and "HUNTER" in (run.providers_attempted or []):
+                return "RECENT"
+        return "AVAILABLE"
 
     def _relationship(self, relationship_id: str) -> OrganizationCompany:
         item = self.session.scalar(
