@@ -61,3 +61,12 @@ access. Marketing Users and Organization Admins can use
 creates a new assessment and its single normal audit event, and preserves the old assessment.
 Freshness reasons contain only safe identifiers and normalized quality labels—never provider
 payloads, credentials, evidence bodies, or restricted URLs.
+
+## Facts you enter
+
+- **Company form fields.** Industry, country and employee range entered when a company is added (by
+  hand or CSV) become `CUSTOMER_PROVIDED` facts the first time the company is added or assessed.
+  This happens only for fact keys the organization has no fact for yet, so research and reviewed
+  facts are never overridden.
+- **Research → + Add fact.** Records a fact you know (industry, country, employees, description,
+  keywords, locations) with its source. Re-assess fit to use it.
