@@ -324,6 +324,8 @@ class ReplyAIResult:
     subject: str
     body: str
     model: str
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 class ReplyAIProvider(Protocol):
@@ -617,7 +619,17 @@ class ReplyAssistantService:
                 item.suggested_body = result.body.strip() or None
                 item.suggestion_model = result.model[:100]
                 item.updated_at = self.now
-                self._audit("reply.suggested", item, {"source": "AI", "intent": item.intent.value})
+                self._audit(
+                    "reply.suggested",
+                    item,
+                    {
+                        "source": "AI",
+                        "intent": item.intent.value,
+                        "model": result.model,
+                        "input_tokens": result.input_tokens or 0,
+                        "output_tokens": result.output_tokens or 0,
+                    },
+                )
                 self.session.flush()
                 return item
         original_subject = approval.subject if approval else ""

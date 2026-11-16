@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from marketingiq.api.ai_campaign_routes import register_ai_campaign_routes
 from marketingiq.api.automation_policy_routes import register_automation_policy_routes
+from marketingiq.api.cost_routes import register_cost_routes
 from marketingiq.api.decision_maker_routes import register_decision_maker_routes
 from marketingiq.api.discovery_routes import register_discovery_routes
 from marketingiq.api.learning_routes import register_learning_routes
@@ -140,6 +141,7 @@ def register_campaign_routes(
     register_ai_campaign_routes(app, prefix, tenant_dependency, session_dependency)
     register_outbound_routes(app, prefix, tenant_dependency, session_dependency)
     register_reply_routes(app, prefix, tenant_dependency, session_dependency)
+    register_cost_routes(app, prefix, tenant_dependency, session_dependency)
     register_pipeline_routes(app, prefix, tenant_dependency, session_dependency)
     register_learning_routes(app, prefix, tenant_dependency, session_dependency)
     register_orchestration_routes(
