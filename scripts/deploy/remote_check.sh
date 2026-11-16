@@ -97,6 +97,82 @@ PY
   while IFS= read -r line; do [ -n "$line" ] && add "$line"; done <<< "$db_report"
 fi
 
+# Outbound email: build a message exactly as the app does, without connecting to SMTP.
+if [ -n "$names" ] && [ -n "${APP_VENV:-}" ] && [ -f "$APP_VENV" ]; then
+  smtp_report=$(
+    load_cpanel_env
+    # shellcheck disable=SC1090
+    . "$APP_VENV"
+    cd "$APP_ROOT" || exit 0
+    LANG=C LC_ALL=C python - <<'PY' 2>&1 | tail -n 12
+import os
+import sys
+import traceback
+
+raw = {k: v for k, v in os.environ.items() if k.startswith(("SMTP_", "IMAP_", "MARKETINGIQ_"))}
+non_ascii = sorted(k for k, v in raw.items() if any(ord(c) > 127 for c in v))
+print(f"Locale: fs={sys.getfilesystemencoding()} preferred={__import__('locale').getpreferredencoding(False)}")
+print(f"Email settings with non-ASCII values (names only): {', '.join(non_ascii) or 'none'}")
+import marketingiq  # noqa: F401  (repairs surrogate-escaped settings)
+from email import policy
+from email.generator import BytesGenerator
+from io import BytesIO
+
+from marketingiq.domain.outbound import OutboundMessage
+from marketingiq.infrastructure import outbound as ob
+
+captured = {}
+
+
+class Probe(ob.smtplib.SMTP):
+    def __init__(self, *a, **k):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def ehlo(self, *a, **k):
+        return (250, b"ok")
+
+    def starttls(self, *a, **k):
+        return (220, b"ok")
+
+    def login(self, *a, **k):
+        return (235, b"ok")
+
+    def send_message(self, msg, *a, **k):
+        buf = BytesIO()
+        BytesGenerator(buf, policy=policy.SMTP).flatten(msg)
+        captured["bytes"] = len(buf.getvalue())
+        return {}
+
+
+ob.smtplib.SMTP = Probe
+ob.smtplib.SMTP_SSL = Probe
+try:
+    sender = ob.SMTPEmailSender()
+    sender.send(
+        OutboundMessage(
+            recipient="probe@example.invalid",
+            subject="E2E Test \u2014 \u0628\u0637\u0627\u0642\u0627\u062a",
+            body="\u0645\u0631\u062d\u0628\u064b\u0627 Test\u060c",
+            idempotency_key="probe",
+            unsubscribe_url="https://example.invalid/u",
+            language="ar",
+        )
+    )
+    print(f"SMTP message build: OK ({captured.get('bytes')} bytes, nothing sent)")
+except Exception:
+    lines = traceback.format_exc().strip().splitlines()
+    print("SMTP message build FAILED: " + " | ".join(line.strip() for line in lines[-8:]))
+PY
+  )
+  while IFS= read -r line; do [ -n "$line" ] && add "$line"; done <<< "$smtp_report"
+fi
+
 # AI providers: free, read-only key and model-access probes (no searches or completions).
 if [ -n "$names" ]; then
   ai_report=$(
