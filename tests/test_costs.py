@@ -87,6 +87,7 @@ def test_report_prices_usage_and_unit_costs(session):
 
     assert report["currency"] == "SAR" and report["prices_missing"] == []
     assert report["usage"]["provider_credits"] == 10
+    assert report["usage"]["provider_credits_estimated"] == 0
     assert report["usage"]["ai_web_searches"] == 4
     costs_by_label = {line["label"]: line["cost"] for line in report["cost_lines"]}
     assert costs_by_label["Provider credits (Hunter)"] == 20.0
@@ -128,3 +129,25 @@ def test_settings_validation_permissions_and_isolation(session):
     other = seed_campaign(session)
     assert costs(session, other).describe_settings()["currency"] == "USD"
     assert costs(session, seeded).describe_settings()["monthly_fixed_cost"] == 100.0
+
+
+def test_unreported_hunter_credits_are_estimated_per_request(session):
+    sender = ThreadSender()
+    seeded, _draft, _attempt = sent_email(session, sender)
+    when = REPLY_NOW - timedelta(days=1)
+    for success in (True, True, False):
+        session.add(
+            ProviderUsage(
+                provider_key="HUNTER",
+                organization_id=seeded["organization"].id,
+                company_id=seeded["company"].id,
+                operation="EMAIL_VERIFY",
+                requested_at=when,
+                success=success,
+                credits_used=None,
+            )
+        )
+    session.flush()
+    report = costs(session, seeded).report(30)
+    assert report["usage"]["provider_credits"] == 2  # failed requests are not charged
+    assert report["cost_lines"][0]["estimated_quantity"] == 2
