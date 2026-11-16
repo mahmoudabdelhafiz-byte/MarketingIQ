@@ -129,3 +129,4 @@ def test_ai_provider_failure_can_fall_back_without_claiming_ai_success(session):
     assert attempt.error_category == "RATE_LIMITED"
     assert attempt.fallback_used is True
     assert attempt.draft_id == draft.id
+    assert draft.personalization_snapshot["ai_fallback_reason"] == "RATE_LIMITED"
