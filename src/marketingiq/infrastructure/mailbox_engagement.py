@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import imaplib
 import os
 import re
@@ -10,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from email import policy
 from email.message import Message
 from email.parser import BytesParser
-from email.utils import parsedate_to_datetime
+from email.utils import parseaddr, parsedate_to_datetime
 from typing import Protocol
 
 from sqlalchemy import select
@@ -18,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from marketingiq.application.engagement import ProviderEngagementIngestionService
 from marketingiq.application.errors import ConflictError, NotFoundError
+from marketingiq.application.replies import attempt_for_answer, capture_reply
 from marketingiq.domain.engagement import EngagementEventType
 from marketingiq.domain.outbound import OutboundSendAttempt, OutboundSendStatus
 
@@ -231,6 +233,20 @@ class MailboxEngagementIngestor:
             matched += 1
             if outcome.event_type == EngagementEventType.REPLIED:
                 replies += 1
+                if not _env_bool("REPLY_CAPTURE_ENABLED", True):
+                    continue
+                content = extract_reply_content(mailbox_message.raw)
+                capture_reply(
+                    self.session,
+                    attempt,
+                    message_key=outcome.incoming_message_id or provider_event_id,
+                    message_id=outcome.incoming_message_id,
+                    from_email=content.from_email,
+                    subject=content.subject,
+                    text=content.text,
+                    received_at=outcome.occurred_at,
+                    now=self.now,
+                )
             elif outcome.event_type == EngagementEventType.BOUNCED:
                 bounces += 1
 
@@ -268,6 +284,10 @@ class MailboxEngagementIngestor:
                     )
                 )
             )
+            if not original_ids:
+                # A reply to one of our answers from the reply assistant.
+                answered = attempt_for_answer(self.session, reference_message_ids)
+                original_ids = {answered} if answered else set()
             if len(original_ids) == 1:
                 original = self.session.get(OutboundSendAttempt, next(iter(original_ids)))
                 if original is not None and original.status == OutboundSendStatus.SENT:
@@ -275,6 +295,45 @@ class MailboxEngagementIngestor:
         if len(unique) != 1:
             return None
         return next(iter(unique.values()))
+
+
+@dataclass(frozen=True)
+class ReplyContent:
+    from_email: str | None
+    subject: str
+    text: str
+
+
+def extract_reply_content(raw: bytes) -> ReplyContent:
+    """Sender, subject and plain text of a reply (HTML is reduced to text)."""
+    try:
+        message = BytesParser(policy=policy.default).parsebytes(raw)
+    except (TypeError, ValueError):
+        return ReplyContent(None, "", "")
+    from_email = parseaddr(str(message.get("From") or ""))[1] or None
+    subject = str(message.get("Subject") or "").strip()
+    text = ""
+    try:
+        part = message.get_body(preferencelist=("plain", "html"))
+        if part is not None:
+            content = part.get_content()
+            if isinstance(content, str):
+                text = content
+                if part.get_content_type() == "text/html":
+                    text = _html_to_text(text)
+    except (KeyError, LookupError, ValueError, TypeError):
+        text = ""
+    return ReplyContent(from_email, subject[:255], text[:50000])
+
+
+def _html_to_text(value: str) -> str:
+    value = re.sub(r"(?is)<(script|style|head).*?</\1>", " ", value)
+    value = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</li>", "\n", value)
+    value = re.sub(r"(?s)<blockquote.*", "", value)
+    value = re.sub(r"<[^>]+>", " ", value)
+    value = html.unescape(value)
+    value = re.sub(r"[ \t]+", " ", value)
+    return re.sub(r"\n\s*\n+", "\n\n", value).strip()
 
 
 def parse_mailbox_outcome(

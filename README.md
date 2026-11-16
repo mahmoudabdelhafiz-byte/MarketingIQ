@@ -27,6 +27,13 @@ rules need the cron lines in [cPanel Passenger deployment](docs/cpanel-passenger
 Drafts are written in the recipient's language: automatically from the company's country (Arabic
 for Arab countries) or as chosen when drafting. See [Grounded AI campaigns](docs/grounded-ai-campaigns.md#draft-language).
 
+## Reply assistant
+
+Replies found by the mailbox scanner appear on the **Replies** page with their intent, two meeting
+times, the product's booking link and a suggested answer (AI answers only from the product's
+knowledge base). You send it in the same thread and record meeting booked / not interested /
+unsubscribe, which updates the pipeline. See [Reply assistant](docs/reply-assistant.md).
+
 ## Follow-ups
 
 When sending an approved email you can schedule up to 2 follow-ups in the same thread (after 3

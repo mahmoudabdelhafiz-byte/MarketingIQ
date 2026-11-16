@@ -180,6 +180,9 @@ class Product(Base, TimestampMixin):
     slug: Mapped[str] = mapped_column(String(100))
     description: Mapped[str | None] = mapped_column(Text)
     value_proposition: Mapped[str | None] = mapped_column(Text)
+    # Reply assistant: facts it may answer from (FAQ, pricing notes, links) and a booking page.
+    knowledge_base: Mapped[str | None] = mapped_column(Text)
+    booking_url: Mapped[str | None] = mapped_column(String(500))
     employee_min: Mapped[int | None] = mapped_column(Integer)
     employee_max: Mapped[int | None] = mapped_column(Integer)
     primary_buyer_roles: Mapped[list[str]] = mapped_column(JSON, default=list)
