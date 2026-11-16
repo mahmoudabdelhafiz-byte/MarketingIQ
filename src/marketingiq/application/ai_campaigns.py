@@ -307,11 +307,12 @@ class GroundedAICampaignService:
             call_to_action=cta if draft_language in LANGUAGES else None,
             language=draft_language,
         )
-        if requested_language:
-            draft.personalization_snapshot = {
-                **(draft.personalization_snapshot or {}),
-                "requested_language": requested_language,
-            }
+        draft.personalization_snapshot = {
+            **(draft.personalization_snapshot or {}),
+            # Shown on the draft so a person knows why the template was used instead of AI.
+            "ai_fallback_reason": category,
+            **({"requested_language": requested_language} if requested_language else {}),
+        }
         attempt.draft_id = draft.id
         self.session.flush()
         return draft
