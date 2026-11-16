@@ -50,6 +50,8 @@ class OutboundMessage:
     # Threading for follow-ups: the Message-ID being answered and the whole chain.
     in_reply_to: str | None = None
     references: tuple[str, ...] = ()
+    # Draft language: decides the wording of the unsubscribe footer.
+    language: str = "en"
 
 
 @dataclass(frozen=True)

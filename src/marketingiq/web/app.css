@@ -736,3 +736,12 @@ details.card[open] > summary {
 strong + .badge {
   margin-left: 6px;
 }
+
+/* Arabic and other right-to-left text: each paragraph takes the direction of its own text. */
+.email-preview,
+textarea,
+input[type="text"],
+input:not([type]) {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
