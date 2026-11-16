@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from marketingiq.application.authorization import Permission, require_permission
+from marketingiq.application.companies import seed_facts_from_company
 from marketingiq.application.errors import NotFoundError
 from marketingiq.application.fit_criteria import (
     SUPPORTED_FACT_KEYS,
@@ -20,6 +21,7 @@ from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.models import (
     ICP,
     AuditLog,
+    Company,
     DataClassification,
     FitGrade,
     FitStatus,
@@ -60,6 +62,13 @@ class FitAssessmentService:
         if product is None or icp is None:
             raise NotFoundError("Product or ICP not found")
 
+        relationship = self.session.get(OrganizationCompany, relationship_id)
+        company = self.session.get(Company, relationship.company_id) if relationship else None
+        if company is not None and relationship.organization_id == self.tenant.organization_id:
+            # Companies added by hand or by CSV: their form fields count as entered facts.
+            seed_facts_from_company(
+                self.session, self.tenant.organization_id, company, now=self.now
+            )
         projections = {item["fact_key"]: item for item in self.intelligence.list(relationship_id)}
         criteria = [
             {
