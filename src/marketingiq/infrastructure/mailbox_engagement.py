@@ -22,6 +22,7 @@ from marketingiq.application.errors import ConflictError, NotFoundError
 from marketingiq.application.replies import attempt_for_answer, capture_reply
 from marketingiq.domain.engagement import EngagementEventType
 from marketingiq.domain.outbound import OutboundSendAttempt, OutboundSendStatus
+from marketingiq.infrastructure.env import env_text
 
 _MESSAGE_ID_RE = re.compile(r"<[^<>\s]+>")
 
@@ -90,13 +91,13 @@ class IMAPMailboxReader:
         starttls: bool | None = None,
         timeout_seconds: int = 20,
     ) -> None:
-        self.host = host if host is not None else os.environ.get("IMAP_HOST")
+        self.host = host if host is not None else env_text("IMAP_HOST")
         self.use_ssl = use_ssl if use_ssl is not None else _env_bool("IMAP_USE_SSL", True)
         default_port = "993" if self.use_ssl else "143"
         self.port = port if port is not None else int(os.environ.get("IMAP_PORT", default_port))
-        self.username = username if username is not None else os.environ.get("IMAP_USERNAME")
-        self._password = password if password is not None else os.environ.get("IMAP_PASSWORD")
-        self.mailbox = mailbox if mailbox is not None else os.environ.get("IMAP_MAILBOX", "INBOX")
+        self.username = username if username is not None else env_text("IMAP_USERNAME")
+        self._password = password if password is not None else env_text("IMAP_PASSWORD")
+        self.mailbox = mailbox if mailbox is not None else env_text("IMAP_MAILBOX", "INBOX")
         self.starttls = (
             starttls
             if starttls is not None

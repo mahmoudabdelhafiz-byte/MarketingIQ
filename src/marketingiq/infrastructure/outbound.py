@@ -15,6 +15,7 @@ from marketingiq.domain.outbound import (
     OutboundProviderRejected,
     OutboundSendResult,
 )
+from marketingiq.infrastructure.env import env_text
 
 
 def unsubscribe_footer(body: str, unsubscribe_url: str, language: str = "en") -> str:
@@ -44,14 +45,14 @@ class SMTPEmailSender:
         starttls: bool | None = None,
         timeout_seconds: int = 15,
     ) -> None:
-        self.host = host if host is not None else os.environ.get("SMTP_HOST")
+        self.host = host if host is not None else env_text("SMTP_HOST")
         self.port = port if port is not None else int(os.environ.get("SMTP_PORT", "587"))
-        self.username = username if username is not None else os.environ.get("SMTP_USERNAME")
-        self._password = password if password is not None else os.environ.get("SMTP_PASSWORD")
+        self.username = username if username is not None else env_text("SMTP_USERNAME")
+        self._password = password if password is not None else env_text("SMTP_PASSWORD")
         self.from_email = (
-            from_email if from_email is not None else os.environ.get("SMTP_FROM_EMAIL")
+            from_email if from_email is not None else env_text("SMTP_FROM_EMAIL")
         )
-        self.from_name = from_name if from_name is not None else os.environ.get("SMTP_FROM_NAME")
+        self.from_name = from_name if from_name is not None else env_text("SMTP_FROM_NAME")
         self.use_ssl = use_ssl if use_ssl is not None else _env_bool("SMTP_USE_SSL", False)
         self.starttls = (
             starttls if starttls is not None else _env_bool("SMTP_STARTTLS", not self.use_ssl)
