@@ -18,6 +18,7 @@ from urllib.parse import urlencode, urlsplit
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from marketingiq.application.follow_up_stops import stop_pending_follow_ups
 from marketingiq.domain.models import AuditLog, Organization
 from marketingiq.domain.outbound import SuppressionEntry, SuppressionSource
 
@@ -108,6 +109,12 @@ def record_opt_out(session: Session, recipient: UnsubscribeRecipient) -> bool:
     )
     session.add(entry)
     session.flush()
+    stop_pending_follow_ups(
+        session,
+        "RECIPIENT_SUPPRESSED",
+        organization_id=recipient.organization_id,
+        email=recipient.email,
+    )
     session.add(
         AuditLog(
             organization_id=recipient.organization_id,

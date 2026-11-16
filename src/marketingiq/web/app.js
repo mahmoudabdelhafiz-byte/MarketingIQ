@@ -2736,7 +2736,7 @@
           h("h2", null, "Spend"),
           table(
             [
-              { label: "Item", render: (l) => l.label },
+              { label: "Item", render: (l) => h("div", null, l.label, l.estimated_quantity ? h("div", { class: "muted small" }, `${l.estimated_quantity} counted as 1 credit each (Hunter does not report credits)`) : null) },
               { label: "Usage", render: (l) => `${Number(l.quantity).toLocaleString()} ${l.unit === "1M tokens" ? "tokens" : l.unit + (l.quantity === 1 ? "" : "s")}` },
               { label: "Price", render: (l) => (l.unit_price == null ? (l.priced ? "" : "not set") : `${money(l.unit_price)} / ${l.unit}`) },
               { label: "Cost", render: (l) => money(l.cost) },

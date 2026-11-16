@@ -241,3 +241,42 @@ def test_read_only_cannot_send(session):
         assistant(session, seeded, sender, role=MembershipRole.READ_ONLY).send(
             reply.id, subject="Re: x", body="y"
         )
+
+
+def test_reply_stops_pending_follow_ups_immediately(session):
+    from test_follow_ups import follow_ups
+
+    from marketingiq.domain.follow_ups import FollowUpStatus
+
+    sender = ThreadSender()
+    seeded, _draft, attempt = sent_email(session, sender)
+    created = follow_ups(session, seeded, sender).schedule(seeded["relationship"].id, attempt.id)
+    assert {item.status for item in created} == {FollowUpStatus.SCHEDULED}
+
+    ingest(session, reply_raw(attempt.provider_message_id, "Thanks, let's talk."))
+
+    for item in created:
+        session.refresh(item)
+    assert {item.status for item in created} == {FollowUpStatus.SKIPPED}
+    assert {item.stop_reason for item in created} == {"CONVERSATION_REPLIED"}
+
+
+def test_suppression_stops_pending_follow_ups_for_that_address(session):
+    from test_follow_ups import follow_ups
+    from test_outbound import outbound_service
+
+    from marketingiq.domain.follow_ups import FollowUpStatus
+    from marketingiq.domain.models import ContactEmail
+
+    sender = ThreadSender()
+    seeded, _draft, attempt = sent_email(session, sender)
+    created = follow_ups(session, seeded, sender).schedule(seeded["relationship"].id, attempt.id)
+    email = session.get(ContactEmail, attempt.contact_email_id).email
+
+    outbound_service(session, seeded, sender).suppress(email.upper(), reason="Asked to stop")
+
+    for item in created:
+        session.refresh(item)
+    assert {(item.status, item.stop_reason) for item in created} == {
+        (FollowUpStatus.SKIPPED, "RECIPIENT_SUPPRESSED")
+    }
