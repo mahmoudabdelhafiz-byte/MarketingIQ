@@ -1,7 +1,5 @@
 """Replies inbox: captured prospect replies, AI-suggested answers, outcomes."""
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import Annotated
 
