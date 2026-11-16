@@ -18,6 +18,8 @@ class AICampaignDraftRequest(BaseModel):
     contact_id: str = Field(min_length=1, max_length=36)
     call_to_action: str | None = Field(default=None, max_length=500)
     fallback_to_deterministic: bool = True
+    # "auto" picks the language from the company's country; or a code such as "en" or "ar".
+    language: str | None = Field(default=None, max_length=10)
 
 
 def register_ai_campaign_routes(
@@ -46,6 +48,7 @@ def register_ai_campaign_routes(
             body.contact_id,
             call_to_action=body.call_to_action,
             fallback_to_deterministic=body.fallback_to_deterministic,
+            language=body.language,
         )
         return _campaign_draft_output(draft, svc.base)
 
@@ -80,6 +83,7 @@ def _campaign_draft_output(item, svc: CampaignDraftService) -> dict[str, Any]:
         },
         "message_angle": item.message_angle,
         "personalization_snapshot": item.personalization_snapshot,
+        "language": (item.personalization_snapshot or {}).get("language", "en"),
         "evidence_snapshot": item.evidence_snapshot,
         "workflow_version": item.workflow_version,
         "created_by_user_id": item.created_by_user_id,

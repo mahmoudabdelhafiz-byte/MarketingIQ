@@ -6,6 +6,7 @@ import ssl
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
 
+from marketingiq.application.languages import pack
 from marketingiq.domain.outbound import (
     OutboundMessage,
     OutboundProviderAuthenticationError,
@@ -16,12 +17,8 @@ from marketingiq.domain.outbound import (
 )
 
 
-def unsubscribe_footer(body: str, unsubscribe_url: str) -> str:
-    return (
-        f"{body.rstrip()}\n\n--\n"
-        f"If you would prefer not to receive further emails from us, unsubscribe here:\n"
-        f"{unsubscribe_url}\n"
-    )
+def unsubscribe_footer(body: str, unsubscribe_url: str, language: str = "en") -> str:
+    return f"{body.rstrip()}\n\n--\n{pack(language).unsubscribe}\n{unsubscribe_url}\n"
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -84,7 +81,7 @@ class SMTPEmailSender:
             # RFC 2369 / RFC 8058 one-click unsubscribe, required by major mailbox providers.
             email["List-Unsubscribe"] = f"<{message.unsubscribe_url}>"
             email["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
-            body = unsubscribe_footer(body, message.unsubscribe_url)
+            body = unsubscribe_footer(body, message.unsubscribe_url, message.language)
         email.set_content(body)
 
         try:

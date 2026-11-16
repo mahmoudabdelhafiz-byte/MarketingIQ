@@ -25,6 +25,8 @@ class CampaignDraftRequest(BaseModel):
     contact_id: str = Field(min_length=1, max_length=36)
     channel: CampaignChannel = CampaignChannel.EMAIL
     call_to_action: str | None = Field(default=None, max_length=500)
+    # "auto" picks the language from the company's country; or a code such as "en" or "ar".
+    language: str | None = Field(default=None, max_length=10)
 
 
 class CampaignDraftEditRequest(BaseModel):
@@ -68,6 +70,7 @@ def register_campaign_routes(
             body.contact_id,
             body.channel,
             body.call_to_action,
+            language=body.language,
         )
         return _campaign_draft_output(draft, svc)
 
@@ -192,6 +195,7 @@ def _campaign_draft_output(item, svc: CampaignDraftService) -> dict[str, Any]:
         },
         "message_angle": item.message_angle,
         "personalization_snapshot": item.personalization_snapshot,
+        "language": (item.personalization_snapshot or {}).get("language", "en"),
         "evidence_snapshot": item.evidence_snapshot,
         "workflow_version": item.workflow_version,
         "created_by_user_id": item.created_by_user_id,

@@ -26,6 +26,7 @@ from marketingiq.application.authorization import (
 )
 from marketingiq.application.decision_makers import targeting_block_reason
 from marketingiq.application.errors import ConflictError, NotFoundError
+from marketingiq.application.languages import DEFAULT_LANGUAGE, draft_language, pack
 from marketingiq.application.outbound import OutboundSenderRegistry
 from marketingiq.application.tenant import TenantContext
 from marketingiq.application.unsubscribe import UnsubscribeLinks
@@ -125,33 +126,30 @@ def compose_follow_up(
     original_subject: str,
     original_body: str,
     original_sent_at: datetime,
+    language: str = DEFAULT_LANGUAGE,
 ) -> tuple[str, str]:
-    """Short, claim-free follow-up text. It repeats only the approved original."""
+    """Short, claim-free follow-up text in the draft's language. It repeats only the original."""
 
-    greeting = f"Hi {first_name.strip()}," if first_name and first_name.strip() else "Hello,"
-    subject = original_subject if original_subject.lower().startswith("re:") else (
-        f"Re: {original_subject}"
-    )[:255]
-    if step == 1:
-        lines = [
-            greeting,
-            f"I wanted to follow up on my note below about {product.name}, in case it got "
-            "buried.",
-            "Would it be worth a short conversation?",
-            "Best regards,",
-        ]
-    else:
-        lines = [
-            greeting,
-            "I don't want to fill your inbox, so this is my last note on this. If "
-            f"{product.name} isn't a priority right now, no problem at all.",
-            "If it is, just reply and I'll send a few times that suit you.",
-            "Best regards,",
-        ]
+    phrases = pack(language)
+    name = (first_name or "").strip()
+    greeting = phrases.greeting_named.format(first_name=name) if name else phrases.greeting
+    subject = (
+        original_subject
+        if original_subject.lower().startswith("re:")
+        else f"Re: {original_subject}"[:255]
+    )
+    template = phrases.follow_up_1 if step == 1 else phrases.follow_up_2
+    lines = [greeting, *(line.format(product=product.name) for line in template), phrases.closing]
     quoted = "\n".join(f"> {line}" for line in original_body.strip().splitlines())
-    sent = original_sent_at.astimezone(UTC).strftime("%d %b %Y")
-    body = "\n\n".join(lines) + f"\n\n\nOn {sent}, I wrote:\n{quoted}"
+    sent = original_sent_at.astimezone(UTC).strftime("%Y-%m-%d" if phrases.rtl else "%d %b %Y")
+    header = phrases.quote_header.format(date=sent)
+    body = "\n\n".join(lines) + f"\n\n\n{header}\n{quoted}"
     return subject, body
+
+
+def _item_language(session: Session, item: OutboundFollowUp) -> str:
+    draft = session.get(CampaignDraft, item.draft_id)
+    return draft_language(draft.personalization_snapshot if draft else None)
 
 
 class FollowUpService:
@@ -216,6 +214,7 @@ class FollowUpService:
                 original_subject=approval.subject,
                 original_body=approval.body,
                 original_sent_at=sent_at,
+                language=draft_language(draft.personalization_snapshot),
             )
             item = OutboundFollowUp(
                 organization_id=self.tenant.organization_id,
@@ -618,6 +617,7 @@ def _deliver(
                 ),
                 in_reply_to=references[-1] if references else None,
                 references=references,
+                language=_item_language(session, item),
             )
         )
         if not result.accepted:

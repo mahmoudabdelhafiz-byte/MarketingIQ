@@ -31,3 +31,17 @@ The generation request contains `qualification_id`, `contact_id`, optional `call
 `campaign_ai_generation_attempts` stores operational metadata only: provider/model, prompt version, safe input fact keys, token counts, status, error category, and request fingerprint. Prompt text and raw AI responses are not persisted.
 
 No production deployment or migration is performed by this feature branch.
+## Draft language
+
+Every draft (AI or template) is written in one language, stored as `personalization_snapshot.language`
+and returned as `language`:
+
+- `language: "auto"` (default) picks it from the company's country: Arabic for Arab countries,
+  French, Spanish, German, Turkish, Portuguese or Italian where they apply, otherwise English.
+  Any supported code (`en`, `ar`, `fr`, `es`, `de`, `tr`, `pt`, `it`) overrides it.
+- The AI is told to write naturally in that language and keep names as supplied. An Arabic AI
+  reply that contains no Arabic is rejected and falls back to the Arabic template.
+- English and Arabic have a reviewed, non-AI template (also used as the AI fallback), Arabic
+  call to action, follow-up wording and unsubscribe line. Other languages are AI-only; their
+  fallback, follow-ups and unsubscribe line are English.
+- The forbidden-claim check covers English and Arabic phrasing.

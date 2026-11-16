@@ -34,6 +34,8 @@ class CampaignAIRequest:
     value_proposition: str
     call_to_action: str
     grounding_facts: tuple[GroundingFact, ...]
+    language: str = "en"
+    language_name: str = "English"
 
 
 @dataclass(frozen=True)
