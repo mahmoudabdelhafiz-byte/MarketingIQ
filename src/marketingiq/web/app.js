@@ -2399,7 +2399,7 @@
         "div",
         { class: "card-head" },
         h("h2", null, "Review draft"),
-        h("div", { class: "row" }, badge(draft.status), h("span", { class: "badge" }, LANGUAGE_NAMES[draft.language] || draft.language || "English"), h("span", { class: "muted small" }, `Revision ${draft.revision_number} · to ${contactName(draft.contact_id)}`)),
+        h("div", { class: "row" }, badge(draft.status), h("span", { class: "badge" }, LANGUAGE_NAMES[draft.language] || draft.language || "English"), draft.personalization_snapshot?.ai_fallback_reason ? h("span", { class: "badge warn", title: `AI drafting failed (${draft.personalization_snapshot.ai_fallback_reason}); the fixed template was used. Try "Draft with AI" again.` }, "Template (AI fallback)") : null, h("span", { class: "muted small" }, `Revision ${draft.revision_number} · to ${contactName(draft.contact_id)}`)),
       ),
       locked
         ? h("div", null, h("div", { class: "email-preview" }, h("strong", null, draft.subject), "\n\n", draft.body))
