@@ -12,6 +12,7 @@ from marketingiq.application.authorization import (
     Permission,
     require_permission,
 )
+from marketingiq.application.contact_imports import pending_imported_count
 from marketingiq.application.contacts import ContactDiscoveryService
 from marketingiq.application.decision_makers import DecisionMakerService
 from marketingiq.application.errors import ConflictError, NotFoundError
@@ -170,8 +171,14 @@ class AutomationOrchestrationService:
                 if qualification
                 else None
             )
+            waiting_imports = (
+                pending_imported_count(self.session, relationship.id) if actionable else 0
+            )
             if not actionable:
                 status, reason = "BLOCKED", "An actionable current qualification is required first"
+            elif waiting_imports:
+                status = "READY"
+                reason = f"{waiting_imports} people from your imported lists are waiting"
             elif contact_count > 0:
                 status, reason = "DONE", "A qualified decision-maker with a verified email exists"
             elif decision_maker_run is not None:

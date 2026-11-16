@@ -134,6 +134,8 @@ class LLMReplyAIProvider:
                 subject=str(data.get("subject") or "").strip(),
                 body=str(data.get("body") or "").strip(),
                 model=self.model,
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
             )
         except (ValueError, KeyError, TypeError, AttributeError, json.JSONDecodeError):
             raise ReplyAIError("INVALID_PROVIDER_RESPONSE") from None
