@@ -154,3 +154,46 @@ def test_restricted_payload_is_not_snapshotted(session):
     serialized = str(result.evidence_snapshot) + str(result.explanation)
     assert "provider" not in serialized.casefold()
     assert "payload" not in serialized.casefold()
+
+
+def test_company_form_fields_count_as_entered_facts(session):
+    service, relationship, product, icp = setup(
+        session,
+        criteria=[("industry", "Software", 5, False), ("country", "SA", 3, False)],
+    )
+    relationship.company.industry = "Software"
+    relationship.company.country_code = "sa"
+    relationship.company.employee_min = 50
+    session.flush()
+
+    assessment = service.evaluate(relationship.id, product.id, icp.id)
+
+    assert assessment.score == 100
+    facts = {
+        f.fact_key: f
+        for f in session.scalars(
+            select(CompanyFact).where(CompanyFact.company_id == relationship.company_id)
+        )
+    }
+    assert facts["country"].value == "SA"
+    assert facts["employee_range"].value == {"min": 50, "max": None}
+    assert all(f.classification == DataClassification.CUSTOMER_PROVIDED for f in facts.values())
+    assert all(f.organization_id == relationship.organization_id for f in facts.values())
+
+    # Evaluating again does not add duplicates.
+    service.evaluate(relationship.id, product.id, icp.id)
+    assert len(list(session.scalars(select(CompanyFact)))) == 3
+
+
+def test_research_facts_win_over_company_form_fields(session):
+    service, relationship, product, icp = setup(
+        session, criteria=[("industry", "Software", 5, False)]
+    )
+    relationship.company.industry = "Software"
+    add_fact(session, relationship, "industry", "Logistics")
+
+    assessment = service.evaluate(relationship.id, product.id, icp.id)
+
+    assert assessment.score == 0
+    keys = [f.fact_key for f in session.scalars(select(CompanyFact))]
+    assert keys == ["industry"]

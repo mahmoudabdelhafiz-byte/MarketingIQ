@@ -1655,6 +1655,52 @@
     );
   }
 
+  function openAddFact(base) {
+    const key = select([
+      { value: "industry", label: "Industry" },
+      { value: "country", label: "Country (2-letter code, e.g. SA)" },
+      { value: "employee_count", label: "Number of employees" },
+      { value: "company_description", label: "Company description" },
+      { value: "keywords", label: "Keywords (comma separated)" },
+      { value: "locations", label: "Locations (comma separated)" },
+    ]);
+    const value = input({ required: true, maxlength: 2000 });
+    const source = input({ maxlength: 2000, placeholder: "Where you know this from, e.g. a meeting, their website, a call" });
+    const url = input({ type: "url", maxlength: 2048, placeholder: "https://… (optional)" });
+    modal(
+      "Add a fact you know",
+      [
+        h("p", { class: "muted small" }, "Recorded as entered by you. Fit uses it like research results; a newer, more confident research fact can still replace it."),
+        field("Fact", key),
+        field("Value", value),
+        field("Source", source),
+        field("Link", url),
+      ],
+      {
+        submitLabel: "Add fact",
+        onSubmit: async () => {
+          let v = value.value.trim();
+          if (key.value === "country") v = v.toUpperCase();
+          if (key.value === "employee_count") {
+            v = Number(v.replace(/[, ]/g, ""));
+            if (!Number.isFinite(v) || v < 1) throw new ApiError(0, "Enter the number of employees.");
+          }
+          if (["keywords", "locations"].includes(key.value)) v = v.split(",").map((x) => x.trim()).filter(Boolean);
+          await post(`${base}/facts`, {
+            fact_key: key.value,
+            value: v,
+            classification: "CUSTOMER_PROVIDED",
+            confidence: 90,
+            observed_at: new Date().toISOString(),
+            evidence: [{ reference_text: source.value.trim() || "Entered by a user", reference_url: url.value.trim() || null, retrieved_at: new Date().toISOString() }],
+          });
+          toast("Fact added. Re-assess fit to use it.");
+          refresh();
+        },
+      },
+    );
+  }
+
   async function companyResearch(ctx) {
     const { base } = ctx;
     const [runs, intel] = await Promise.all([get(`${base}/research-runs`), get(`${base}/intelligence`)]);
@@ -1691,7 +1737,7 @@
       h(
         "div",
         { class: "card" },
-        h("h2", null, "Company intelligence"),
+        h("div", { class: "card-head" }, h("h2", null, "Company intelligence"), h("button", { class: "btn small", onclick: () => openAddFact(base) }, "+ Add fact")),
         table(
           [
             { label: "Fact", render: (f) => h("strong", null, f.fact_key.replaceAll("_", " ")) },

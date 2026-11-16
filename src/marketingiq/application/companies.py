@@ -4,7 +4,7 @@ import csv
 import io
 import ipaddress
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -230,6 +230,7 @@ class CompanyService:
             self.session.add(relationship)
             self.session.flush()
             self._audit("company.attached", "organization_company", relationship.id)
+        seed_facts_from_company(self.session, self.tenant.organization_id, company)
         return relationship
 
     def update_relationship(
@@ -511,3 +512,58 @@ class CompanyService:
                 virtual_new[domain] = placeholder
                 virtual_attached.add(placeholder)
         return ImportRow(number, name or None, domain, action, warnings, errors, values)
+
+
+COMPANY_FIELD_FACTS = (("industry", "industry"), ("country_code", "country"))
+
+
+def seed_facts_from_company(
+    session: Session, organization_id: str, company: Company, now: datetime | None = None
+) -> list[CompanyFact]:
+    """Turn the company form's industry, country and size into tenant facts fit can use.
+
+    Only fills fact keys the organization has no fact for yet, so research results and
+    reviewed facts are never overridden. The facts are CUSTOMER_PROVIDED (entered by you).
+    """
+
+    existing = set(
+        session.scalars(
+            select(CompanyFact.fact_key).where(
+                CompanyFact.company_id == company.id,
+                or_(
+                    CompanyFact.organization_id == organization_id,
+                    CompanyFact.organization_id.is_(None),
+                ),
+            )
+        )
+    )
+    wanted: list[tuple[str, Any]] = []
+    for attribute, key in COMPANY_FIELD_FACTS:
+        value = getattr(company, attribute, None)
+        if value not in (None, "") and key not in existing:
+            if key == "country" and "country_code" in existing:
+                continue
+            wanted.append((key, value.strip().upper() if key == "country" else value.strip()))
+    size_min, size_max = company.employee_min, company.employee_max
+    if (size_min is not None or size_max is not None) and not (
+        {"employee_range", "employee_count"} & existing
+    ):
+        wanted.append(("employee_range", {"min": size_min, "max": size_max}))
+    created = []
+    for key, value in wanted:
+        fact = CompanyFact(
+            company_id=company.id,
+            organization_id=organization_id,
+            fact_key=key,
+            value=value,
+            classification=DataClassification.CUSTOMER_PROVIDED,
+            redistribution_status=RedistributionStatus.UNKNOWN,
+            confidence=80,
+            observed_at=now or datetime.now(UTC),
+        )
+        fact.evidences.append(Evidence(reference_text="Entered on the company form"))
+        session.add(fact)
+        created.append(fact)
+    if created:
+        session.flush()
+    return created
