@@ -173,6 +173,57 @@ PY
   while IFS= read -r line; do [ -n "$line" ] && add "$line"; done <<< "$smtp_report"
 fi
 
+# Live SMTP handshake: connect, TLS, login, MAIL FROM and RCPT TO, then RSET; no message is sent.
+if [ -n "$names" ] && [ -n "${APP_VENV:-}" ] && [ -f "$APP_VENV" ]; then
+  smtp_live=$(
+    load_cpanel_env
+    # shellcheck disable=SC1090
+    . "$APP_VENV"
+    cd "$APP_ROOT" || exit 0
+    SMTP_PROBE_RCPT="${SMTP_PROBE_RCPT:-}" python - <<'PY' 2>&1 | tail -n 8
+import os
+import smtplib
+import ssl
+
+from marketingiq.infrastructure.outbound import SMTPEmailSender
+
+s = SMTPEmailSender()
+mode = "SSL" if s.use_ssl else ("STARTTLS" if s.starttls else "plain")
+print(f"SMTP config: host={s.host} port={s.port} mode={mode} user_set={bool(s.username)} "
+      f"from={s.from_email} from_name={s.from_name!r}")
+step = "connect"
+try:
+    if s.use_ssl:
+        c = smtplib.SMTP_SSL(s.host, s.port, timeout=20, context=ssl.create_default_context())
+    else:
+        c = smtplib.SMTP(s.host, s.port, timeout=20)
+    with c:
+        step = "ehlo"
+        c.ehlo()
+        if s.starttls and not s.use_ssl:
+            step = "starttls"
+            c.starttls(context=ssl.create_default_context())
+            c.ehlo()
+        if s.username:
+            step = "login"
+            c.login(s.username, s._password or "")
+        step = "mail from"
+        code, msg = c.mail(s.from_email or "")
+        print(f"SMTP MAIL FROM: {code} {msg[:120]!r}")
+        rcpt = os.environ.get("SMTP_PROBE_RCPT") or "info@barmageyat.net"
+        step = "rcpt to"
+        code, msg = c.rcpt(rcpt)
+        print(f"SMTP RCPT TO {rcpt}: {code} {msg[:120]!r}")
+        c.rset()
+    print("SMTP handshake: OK up to RCPT TO (nothing sent)")
+except Exception as error:  # noqa: BLE001
+    detail = getattr(error, "smtp_code", None), str(getattr(error, "smtp_error", b"") or error)[:200]
+    print(f"SMTP handshake FAILED at {step}: {type(error).__name__} {detail}")
+PY
+  )
+  while IFS= read -r line; do [ -n "$line" ] && add "$line"; done <<< "$smtp_live"
+fi
+
 # How SMTP_FROM_NAME is stored in .htaccess (Passenger reads it from there); not a secret.
 if [ -f "$APP_ROOT/.htaccess" ]; then
   from_report=$(python3 - "$APP_ROOT/.htaccess" <<'PY' 2>&1 | tail -n 3
