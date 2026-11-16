@@ -277,7 +277,7 @@ class CostReportService:
                 .join(ContactCandidate, ContactCandidate.id == ContactEmail.contact_id)
                 .where(
                     ContactCandidate.organization_id == org,
-                    ContactEmail.verification_status == EmailVerificationStatus.VERIFIED,
+                    ContactEmail.verification_status == EmailVerificationStatus.VALID,
                     ContactEmail.verified_at >= start,
                     ContactEmail.verified_at < end,
                 )
