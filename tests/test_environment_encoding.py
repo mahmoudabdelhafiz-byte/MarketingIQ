@@ -46,3 +46,9 @@ def test_invalid_bytes_are_replaced_not_crashing():
 def test_imap_credentials_are_repaired(server_environ):
     server_environ["IMAP_USERNAME"] = ascii_locale("مبيعات@example.test")
     assert IMAPMailboxReader().username == "مبيعات@example.test"
+
+
+def test_email_address_as_smtp_host_is_not_configured():
+    sender = SMTPEmailSender(host="someone@example.test", from_email="sales@example.test")
+    assert sender.configured is False
+    assert SMTPEmailSender(host="mail.example.test", from_email="sales@example.test").configured
