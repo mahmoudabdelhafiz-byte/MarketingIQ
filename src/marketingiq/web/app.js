@@ -624,6 +624,7 @@
           link("#/automation", "Automation", "automation"),
           link("#/follow-ups", "Follow-ups", "follow-ups"),
           link("#/replies", "Replies", "replies"),
+          link("#/costs", "Costs", "costs"),
           link("#/insights", "Insights", "insights"),
           link("#/suppressions", "Suppression list", "suppressions"),
         ),
@@ -665,6 +666,7 @@
     [/^#\/suppressions$/, "suppressions", () => viewSuppressions()],
     [/^#\/follow-ups$/, "follow-ups", () => viewFollowUps()],
     [/^#\/replies$/, "replies", () => viewReplies()],
+    [/^#\/costs$/, "costs", () => viewCosts()],
   ];
 
   async function render() {
@@ -2574,6 +2576,122 @@
           ],
           done,
           { empty: "Nothing handled yet." },
+        ),
+      ),
+    );
+  }
+
+  function openCostSettings(settings) {
+    const currency = input({ value: settings.currency || "USD", maxlength: 3, required: true });
+    const num = (value) => input({ type: "number", min: 0, step: "0.0001", value: value ?? "" });
+    const credit = num(settings.provider_credit_cost);
+    const aiIn = num(settings.ai_input_per_million);
+    const aiOut = num(settings.ai_output_per_million);
+    const search = num(settings.web_search_cost);
+    const fixed = num(settings.monthly_fixed_cost);
+    modal(
+      "Cost settings",
+      [
+        h("p", { class: "muted small" }, "Your own prices. Leave a field empty if you don't pay for it; usage still shows."),
+        field("Currency", currency, "3 letters, e.g. USD, SAR, EGP"),
+        h("div", { class: "form-grid" }, field("Hunter: price per credit", credit, "Plan price ÷ credits per month"), field("AI web search: price per search", search)),
+        h("div", { class: "form-grid" }, field("AI: price per 1M input tokens", aiIn), field("AI: price per 1M output tokens", aiOut)),
+        field("Monthly fixed costs", fixed, "Subscriptions and hosting, spread over the period"),
+      ],
+      {
+        onSubmit: async () => {
+          await put("/costs/settings", {
+            currency: currency.value.trim().toUpperCase(),
+            provider_credit_cost: numOrNull(credit.value),
+            ai_input_per_million: numOrNull(aiIn.value),
+            ai_output_per_million: numOrNull(aiOut.value),
+            web_search_cost: numOrNull(search.value),
+            monthly_fixed_cost: numOrNull(fixed.value),
+          });
+          toast("Cost settings saved");
+          refresh();
+        },
+      },
+    );
+  }
+
+  async function viewCosts() {
+    const days = state.costDays || 30;
+    const [report, settings] = await Promise.all([get(`/costs/report?days=${days}`), get("/costs/settings")]);
+    const money = (value) => (value == null ? "—" : `${report.currency} ${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+    const period = select([{ value: "7", label: "Last 7 days" }, { value: "30", label: "Last 30 days" }, { value: "90", label: "Last 90 days" }, { value: "365", label: "Last 12 months" }], { value: String(days) });
+    period.addEventListener("change", () => { state.costDays = Number(period.value); refresh(); });
+    const f = report.funnel;
+    const u = report.unit_costs;
+    const tile = (label, value, sub) => h("div", { class: "card" }, h("div", { class: "muted small" }, label), h("h2", null, value), sub ? h("div", { class: "muted small" }, sub) : null);
+    return h(
+      "div",
+      null,
+      pageHead("Costs", "Estimated spend per lead, reply and meeting, from recorded usage and your own prices.", [period, h("button", { class: "btn", onclick: () => openCostSettings(settings) }, "Cost settings")]),
+      report.prices_missing.length
+        ? h("div", { class: "card" }, h("p", { class: "muted" }, `No price set for: ${report.prices_missing.join(", ")}. Those lines count as zero until you add a price in Cost settings.`))
+        : null,
+      h(
+        "div",
+        { class: "grid cols-4" },
+        tile("Total spend (estimate)", money(report.total_cost), `${days} days`),
+        tile("Cost per lead", money(u.per_lead), `${f.leads} people with a verified email`),
+        tile("Cost per reply", money(u.per_reply), `${f.replies} conversations replied`),
+        tile("Cost per meeting", money(u.per_meeting), `${f.meetings} meetings`),
+      ),
+      h(
+        "div",
+        { class: "grid cols-2" },
+        h(
+          "div",
+          { class: "card" },
+          h("h2", null, "Funnel"),
+          kv([
+            ["Companies added", f.companies_added],
+            ["Qualified", f.qualified],
+            ["Contacts found", f.contacts_found],
+            ["Leads (verified email)", f.leads],
+            ["Emails sent", `${f.emails_sent} (+${f.follow_ups_sent} follow-ups)`],
+            ["Replies", f.replies],
+            ["Meetings", f.meetings],
+            ["Won", f.won],
+            ["Cost per email sent", money(u.per_email_sent)],
+            ["Cost per company added", money(u.per_company_added)],
+          ]),
+        ),
+        h(
+          "div",
+          { class: "card" },
+          h("h2", null, "Spend"),
+          table(
+            [
+              { label: "Item", render: (l) => l.label },
+              { label: "Usage", render: (l) => `${Number(l.quantity).toLocaleString()} ${l.unit === "1M tokens" ? "tokens" : l.unit + (l.quantity === 1 ? "" : "s")}` },
+              { label: "Price", render: (l) => (l.unit_price == null ? (l.priced ? "" : "not set") : `${money(l.unit_price)} / ${l.unit}`) },
+              { label: "Cost", render: (l) => money(l.cost) },
+            ],
+            report.cost_lines,
+          ),
+          h("p", { class: "muted small" }, `${report.usage.ai_calls} AI calls in this period.`),
+        ),
+      ),
+      h(
+        "div",
+        { class: "card" },
+        h("h2", null, "By product"),
+        h("p", { class: "muted small" }, "Where your emails are working. Spend is not split by product."),
+        table(
+          [
+            { label: "Product", render: (p) => p.product_name },
+            { label: "Emails sent", render: (p) => p.emails_sent },
+            { label: "Replies", render: (p) => p.replies },
+            { label: "Reply rate", render: (p) => (p.reply_rate == null ? "—" : `${Math.round(p.reply_rate * 100)}%`) },
+            { label: "Meetings", render: (p) => p.meetings },
+            { label: "Meeting rate", render: (p) => (p.meeting_rate == null ? "—" : `${Math.round(p.meeting_rate * 100)}%`) },
+            { label: "Won", render: (p) => p.won },
+          ],
+          report.per_product,
+          { empty: "No emails sent in this period." },
         ),
       ),
     );

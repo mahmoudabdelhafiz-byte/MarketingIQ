@@ -27,6 +27,11 @@ rules need the cron lines in [cPanel Passenger deployment](docs/cpanel-passenger
 Drafts are written in the recipient's language: automatically from the company's country (Arabic
 for Arab countries) or as chosen when drafting. See [Grounded AI campaigns](docs/grounded-ai-campaigns.md#draft-language).
 
+## Costs
+
+**Costs** estimates spend per lead, reply and meeting from recorded usage (Hunter credits, AI tokens,
+AI web searches) and your own prices, with a per-product breakdown. See [Costs](docs/costs.md).
+
 ## Reply assistant
 
 Replies found by the mailbox scanner appear on the **Replies** page with their intent, two meeting
