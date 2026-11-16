@@ -18,6 +18,21 @@ from marketingiq.infrastructure.ai_discovery import build_ai_discovery_provider
 from marketingiq.infrastructure.discovery import HunterDiscoveryProvider
 
 SOURCE_PATTERN = r"^[A-Za-z_]{2,50}$"
+PROVIDER_MESSAGES = {
+    "AUTHENTICATION_ERROR": (
+        "The search provider rejected the API key. Create a new key in the provider's console, "
+        "update it in Setup Python App → Environment variables, then Restart."
+    ),
+    "RATE_LIMITED": "The search provider's rate limit was reached. Try again in a few minutes.",
+    "INSUFFICIENT_BALANCE": "The AI provider account has no balance left.",
+    "DAILY_LIMIT": "Today's AI search limit is used up (DISCOVERY_AI_DAILY_LIMIT).",
+    "NOT_CONFIGURED": "This search source is not configured.",
+    "NETWORK_ERROR": "The search provider could not be reached. Try again.",
+    "PROVIDER_UNAVAILABLE": "The search provider is temporarily unavailable. Try again later.",
+    "MALFORMED_RESPONSE": "The AI search returned an unusable answer. Try again.",
+    "INCOMPLETE_RESPONSE": "The AI search did not finish. Try again with narrower filters.",
+    "SEARCH_UNAVAILABLE": "DeepSeek search is unavailable right now. Try again later.",
+}
 
 
 class DiscoveryCriteriaRequest(BaseModel):
@@ -115,8 +130,9 @@ def register_discovery_routes(
             # Provider messages are fixed, credential-free strings; the code drives UI wording.
             category = getattr(error, "category", "PROVIDER_ERROR")
             conflict = category in {"NOT_CONFIGURED", "DAILY_LIMIT", "INSUFFICIENT_BALANCE"}
+            detail = PROVIDER_MESSAGES.get(category, str(error))
             return JSONResponse(
-                {"detail": str(error), "code": category}, status_code=409 if conflict else 502
+                {"detail": detail, "code": category}, status_code=409 if conflict else 502
             )
 
     @app.post(base + "/add", status_code=201)

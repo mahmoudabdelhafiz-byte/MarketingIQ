@@ -50,7 +50,22 @@ if [ -n "$names" ] && [ -n "${APP_VENV:-}" ] && [ -f "$APP_VENV" ]; then
     . "$APP_VENV"
     cd "$APP_ROOT" || exit 0
     echo "Installed package: $(python -m pip show marketingiq 2>/dev/null | awk '/^Version:/{print $2}')"
-    python - <<'PY' 2>&1 | tail -n 6
+    python - <<'PY' 2>&1 | tail -n 1
+import filecmp
+import pathlib
+
+import marketingiq
+
+installed = pathlib.Path(marketingiq.__file__).resolve().parent
+source = pathlib.Path("src/marketingiq").resolve()
+if installed == source:
+    print("Installed code: editable install of the app folder")
+else:
+    files = [p.relative_to(source) for p in source.rglob("*") if p.is_file() and "__pycache__" not in p.parts]
+    stale = [str(f) for f in files if not (installed / f).is_file() or not filecmp.cmp(source / f, installed / f, shallow=False)]
+    print(f"Installed code: {len(files) - len(stale)}/{len(files)} files match the app folder" + (f"; differ: {' '.join(stale[:8])}" if stale else ""))
+PY
+    python - <<'PY' 2>&1 | tail -n 2
 from sqlalchemy import text
 
 from marketingiq.infrastructure.database import create_database_engine
@@ -67,6 +82,74 @@ print(
 PY
   )
   while IFS= read -r line; do [ -n "$line" ] && add "$line"; done <<< "$db_report"
+fi
+
+# AI providers: free, read-only key and model-access probes (no searches or completions).
+if [ -n "$names" ]; then
+  ai_report=$(
+    load_cpanel_env
+    python3 - <<'PY' 2>&1 | tail -n 8
+import json
+import os
+import urllib.error
+import urllib.request
+
+DEFAULTS = {"CAMPAIGN": "gpt-5.6-luna", "DISCOVERY": "gpt-5.5", "DECISION_MAKER": "gpt-5.6-luna"}
+
+
+def get(url, headers):
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return response.status, json.loads(response.read() or b"{}")
+    except urllib.error.HTTPError as error:
+        try:
+            body = json.loads(error.read() or b"{}")
+        except ValueError:
+            body = {}
+        return error.code, body
+    except Exception as error:  # noqa: BLE001
+        return 0, {"error": {"code": type(error).__name__}}
+
+
+def code_of(body):
+    err = body.get("error") if isinstance(body, dict) else None
+    if isinstance(err, dict):
+        return str(err.get("code") or err.get("type") or "")
+    return ""
+
+
+provider = (os.environ.get("AI_PROVIDER") or "openai").lower()
+key = os.environ.get("OPENAI_API_KEY", "").strip()
+if key:
+    headers = {"Authorization": "Bearer " + key}
+    status, body = get("https://api.openai.com/v1/models", headers)
+    print(f"OpenAI key: GET /v1/models -> {status} {code_of(body)}".rstrip())
+    if status == 200:
+        available = {m.get("id") for m in body.get("data", []) if isinstance(m, dict)}
+        for feature, default in DEFAULTS.items():
+            env = {"CAMPAIGN": "CAMPAIGN_AI_MODEL", "DISCOVERY": "DISCOVERY_AI_MODEL",
+                   "DECISION_MAKER": "ROLE_RESOLVER_MODEL"}[feature]
+            model = os.environ.get(env, "").strip() or default
+            status, body = get("https://api.openai.com/v1/models/" + model, headers)
+            listed = "listed" if model in available else "not listed"
+            print(f"OpenAI {feature.lower()} model {model}: {status} {code_of(body)} ({listed})".rstrip())
+        gpt = sorted(m for m in available if m and m.startswith("gpt-5"))[-6:]
+        print("OpenAI gpt-5 models on this key: " + (", ".join(gpt) or "none"))
+for name, url, hdr in (
+    ("ANTHROPIC_API_KEY", "https://api.anthropic.com/v1/models", "x-api-key"),
+    ("DEEPSEEK_API_KEY", "https://api.deepseek.com/models", "Authorization"),
+):
+    key = os.environ.get(name, "").strip()
+    if key:
+        value = key if hdr == "x-api-key" else "Bearer " + key
+        headers = {hdr: value, "anthropic-version": "2023-06-01"}
+        status, body = get(url, headers)
+        print(f"{name.split('_')[0].title()} key: GET models -> {status} {code_of(body)}".rstrip())
+print(f"AI_PROVIDER: {provider}")
+PY
+  )
+  while IFS= read -r line; do [ -n "$line" ] && add "$line"; done <<< "$ai_report"
 fi
 
 # Public exposure: server-only files in a folder that may double as the document root.
