@@ -1,0 +1,58 @@
+name: Run job
+
+# Runs one scheduled job on the production server now (useful before cron is set up,
+# or to process replies / follow-ups immediately). Uses the same SSH secrets as Deploy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Job to run on the server"
+        type: choice
+        options:
+          - run_mailbox_engagement
+          - run_follow_ups
+          - run_pipeline_sync
+          - run_automation_policies
+          - run_company_discovery
+        default: run_mailbox_engagement
+
+concurrency:
+  group: production-job-${{ inputs.job }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      JOB: ${{ inputs.job }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      APP_ROOT: ${{ vars.APP_ROOT }}
+      APP_VENV: ${{ vars.APP_VENV }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Only from main
+        run: |
+          if [ "${{ github.ref_name }}" != "main" ]; then
+            echo "::error::Run jobs from the main branch (Use workflow from: main)"
+            exit 1
+          fi
+      - name: SSH access
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KEY_PASSPHRASE: ${{ secrets.SSH_KEY_PASSPHRASE }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: bash scripts/deploy/setup_ssh.sh
+      - name: Run ${{ inputs.job }}
+        run: |
+          cat scripts/deploy/common.sh scripts/deploy/run_job.sh \
+            | ssh server "APP_ROOT='${APP_ROOT}' APP_VENV='${APP_VENV}' JOB='${JOB}' bash -s"
+      - name: Remove key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

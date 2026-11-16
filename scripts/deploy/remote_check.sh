@@ -97,6 +97,157 @@ PY
   while IFS= read -r line; do [ -n "$line" ] && add "$line"; done <<< "$db_report"
 fi
 
+# Outbound email: build a message exactly as the app does, without connecting to SMTP.
+if [ -n "$names" ] && [ -n "${APP_VENV:-}" ] && [ -f "$APP_VENV" ]; then
+  smtp_report=$(
+    load_cpanel_env
+    # shellcheck disable=SC1090
+    . "$APP_VENV"
+    cd "$APP_ROOT" || exit 0
+    LANG=C LC_ALL=C python - <<'PY' 2>&1 | tail -n 12
+import os
+import sys
+import traceback
+
+raw = {k: v for k, v in os.environ.items() if k.startswith(("SMTP_", "IMAP_", "MARKETINGIQ_"))}
+non_ascii = sorted(k for k, v in raw.items() if any(ord(c) > 127 for c in v))
+print(f"Locale: fs={sys.getfilesystemencoding()} preferred={__import__('locale').getpreferredencoding(False)}")
+print(f"Email settings with non-ASCII values (names only): {', '.join(non_ascii) or 'none'}")
+import marketingiq  # noqa: F401  (repairs surrogate-escaped settings)
+from email import policy
+from email.generator import BytesGenerator
+from io import BytesIO
+
+from marketingiq.domain.outbound import OutboundMessage
+from marketingiq.infrastructure import outbound as ob
+
+captured = {}
+
+
+class Probe(ob.smtplib.SMTP):
+    def __init__(self, *a, **k):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def ehlo(self, *a, **k):
+        return (250, b"ok")
+
+    def starttls(self, *a, **k):
+        return (220, b"ok")
+
+    def login(self, *a, **k):
+        return (235, b"ok")
+
+    def send_message(self, msg, *a, **k):
+        buf = BytesIO()
+        BytesGenerator(buf, policy=policy.SMTP).flatten(msg)
+        captured["bytes"] = len(buf.getvalue())
+        return {}
+
+
+ob.smtplib.SMTP = Probe
+ob.smtplib.SMTP_SSL = Probe
+try:
+    sender = ob.SMTPEmailSender()
+    sender.send(
+        OutboundMessage(
+            recipient="probe@example.invalid",
+            subject="E2E Test \u2014 \u0628\u0637\u0627\u0642\u0627\u062a",
+            body="\u0645\u0631\u062d\u0628\u064b\u0627 Test\u060c",
+            idempotency_key="probe",
+            unsubscribe_url="https://example.invalid/u",
+            language="ar",
+        )
+    )
+    print(f"SMTP message build: OK ({captured.get('bytes')} bytes, nothing sent)")
+except Exception:
+    lines = traceback.format_exc().strip().splitlines()
+    print("SMTP message build FAILED: " + " | ".join(line.strip() for line in lines[-8:]))
+PY
+  )
+  while IFS= read -r line; do [ -n "$line" ] && add "$line"; done <<< "$smtp_report"
+fi
+
+# Live SMTP handshake: connect, TLS, login, MAIL FROM and RCPT TO, then RSET; no message is sent.
+if [ -n "$names" ] && [ -n "${APP_VENV:-}" ] && [ -f "$APP_VENV" ]; then
+  smtp_live=$(
+    load_cpanel_env
+    # shellcheck disable=SC1090
+    . "$APP_VENV"
+    cd "$APP_ROOT" || exit 0
+    SMTP_PROBE_RCPT="${SMTP_PROBE_RCPT:-}" python - <<'PY' 2>&1 | tail -n 8
+import os
+import smtplib
+import ssl
+
+from marketingiq.infrastructure.outbound import SMTPEmailSender
+
+s = SMTPEmailSender()
+mode = "SSL" if s.use_ssl else ("STARTTLS" if s.starttls else "plain")
+print(f"SMTP config: host={s.host} port={s.port} mode={mode} user_set={bool(s.username)} "
+      f"from={s.from_email} from_name={s.from_name!r}")
+step = "connect"
+try:
+    if s.use_ssl:
+        c = smtplib.SMTP_SSL(s.host, s.port, timeout=20, context=ssl.create_default_context())
+    else:
+        c = smtplib.SMTP(s.host, s.port, timeout=20)
+    with c:
+        step = "ehlo"
+        c.ehlo()
+        if s.starttls and not s.use_ssl:
+            step = "starttls"
+            c.starttls(context=ssl.create_default_context())
+            c.ehlo()
+        if s.username:
+            step = "login"
+            c.login(s.username, s._password or "")
+        step = "mail from"
+        code, msg = c.mail(s.from_email or "")
+        print(f"SMTP MAIL FROM: {code} {msg[:120]!r}")
+        rcpt = os.environ.get("SMTP_PROBE_RCPT") or "info@barmageyat.net"
+        step = "rcpt to"
+        code, msg = c.rcpt(rcpt)
+        print(f"SMTP RCPT TO {rcpt}: {code} {msg[:120]!r}")
+        c.rset()
+    print("SMTP handshake: OK up to RCPT TO (nothing sent)")
+except Exception as error:  # noqa: BLE001
+    detail = getattr(error, "smtp_code", None), str(getattr(error, "smtp_error", b"") or error)[:200]
+    print(f"SMTP handshake FAILED at {step}: {type(error).__name__} {detail}")
+PY
+  )
+  while IFS= read -r line; do [ -n "$line" ] && add "$line"; done <<< "$smtp_live"
+fi
+
+# How SMTP_FROM_NAME is stored in .htaccess (Passenger reads it from there); not a secret.
+if [ -f "$APP_ROOT/.htaccess" ]; then
+  from_report=$(python3 - "$APP_ROOT/.htaccess" <<'PY' 2>&1 | tail -n 3
+import re
+import sys
+
+data = open(sys.argv[1], "rb").read()
+match = re.search(rb"^\s*SetEnv\s+SMTP_FROM_NAME\s+(.*?)\s*$", data, re.M)
+if not match:
+    print("htaccess SMTP_FROM_NAME: not set")
+else:
+    raw = match.group(1)
+    try:
+        text, valid = raw.decode("utf-8"), "valid UTF-8"
+    except UnicodeDecodeError:
+        text, valid = raw.decode("utf-8", "replace"), "NOT valid UTF-8"
+    quoted = raw[:1] in (b'"', b"'")
+    print("htaccess SMTP_FROM_NAME: %d bytes, %s, quoted=%s, value=%r, hex=%s"
+          % (len(raw), valid, quoted, text, raw[:48].hex()))
+PY
+  )
+  while IFS= read -r line; do [ -n "$line" ] && add "$line"; done <<< "$from_report"
+fi
+
 # AI providers: free, read-only key and model-access probes (no searches or completions).
 if [ -n "$names" ]; then
   ai_report=$(
