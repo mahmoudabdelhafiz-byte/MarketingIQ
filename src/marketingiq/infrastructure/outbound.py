@@ -75,6 +75,10 @@ class SMTPEmailSender:
         email["Subject"] = message.subject
         email["Message-ID"] = make_msgid()
         email["X-MarketingIQ-Idempotency-Key"] = message.idempotency_key
+        if message.in_reply_to:
+            email["In-Reply-To"] = message.in_reply_to
+        if message.references:
+            email["References"] = " ".join(message.references)
         body = message.body
         if message.unsubscribe_url:
             # RFC 2369 / RFC 8058 one-click unsubscribe, required by major mailbox providers.

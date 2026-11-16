@@ -47,6 +47,9 @@ class OutboundMessage:
     body: str
     idempotency_key: str
     unsubscribe_url: str | None = None
+    # Threading for follow-ups: the Message-ID being answered and the whole chain.
+    in_reply_to: str | None = None
+    references: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

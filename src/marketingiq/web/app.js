@@ -618,6 +618,7 @@
           link("#/products", "Products & ICPs", "products"),
           link("#/companies", "Companies", "companies"),
           link("#/automation", "Automation", "automation"),
+          link("#/follow-ups", "Follow-ups", "follow-ups"),
           link("#/insights", "Insights", "insights"),
           link("#/suppressions", "Suppression list", "suppressions"),
         ),
@@ -657,6 +658,7 @@
     [/^#\/automation$/, "automation", () => viewAutomation()],
     [/^#\/insights$/, "insights", () => viewInsights()],
     [/^#\/suppressions$/, "suppressions", () => viewSuppressions()],
+    [/^#\/follow-ups$/, "follow-ups", () => viewFollowUps()],
   ];
 
   async function render() {
@@ -2237,6 +2239,8 @@
     const { base } = ctx;
     const draftBase = `${base}/campaign-drafts/${draft.id}`;
     const [attempts, history] = await Promise.all([get(`${draftBase}/send-attempts`), get(`${draftBase}/history`)]);
+    const sentAttempt = attempts.find((a) => a.status === "SENT");
+    const sequence = sentAttempt ? await soft(get(`${draftBase}/send-attempts/${sentAttempt.id}/follow-ups`), []) : [];
     const sent = attempts.find((a) => a.status === "SENT");
     const subject = input({ value: draft.subject || "", maxlength: 255 });
     const body = h("textarea", { rows: 12, maxlength: 20000 }, draft.body || "");
@@ -2265,18 +2269,30 @@
 
     const send = () => {
       const key = newKey();
+      const followUpsOn = h("input", { type: "checkbox", checked: true });
+      const followUpMode = select([
+        { value: "approve", label: "after I approve each one (Follow-ups page)" },
+        { value: "auto", label: "automatically, Sun–Thu working hours, within the daily limit" },
+      ]);
       modal(
         "Send email",
         [
           h("p", null, "Send this approved email to ", h("strong", null, contactName(draft.contact_id)), " now?"),
           h("div", { class: "email-preview" }, h("strong", null, draft.subject), "\n\n", draft.body),
           h("p", { class: "muted small" }, "An unsubscribe link is added automatically. The email is sent once only."),
+          h("label", { class: "check" }, followUpsOn, " Follow up if there is no reply: 2 short emails in the same thread, after 3 and 7 days. They stop automatically on any reply, bounce or unsubscribe."),
+          h("div", { class: "field" }, h("span", null, "Follow-ups are sent"), followUpMode),
         ],
         {
           submitLabel: "Send now",
           onSubmit: async () => {
-            const attempt = await post(`${draftBase}/send`, { provider: "SMTP", idempotency_key: key });
-            if (attempt.status === "SENT") toast("Email sent");
+            const attempt = await post(`${draftBase}/send`, {
+              provider: "SMTP",
+              idempotency_key: key,
+              follow_ups: followUpsOn.checked,
+              follow_up_auto_send: followUpMode.value === "auto",
+            });
+            if (attempt.status === "SENT") toast(attempt.follow_ups?.length ? `Email sent · ${attempt.follow_ups.length} follow-ups scheduled` : "Email sent");
             else toast(`Send failed: ${attempt.error_category || attempt.status}`, true);
             refresh();
           },
@@ -2357,6 +2373,19 @@
         attempts,
         { empty: "Not sent yet." },
       ),
+      sentAttempt
+        ? [
+            h("h3", { class: "stack" }, "Follow-ups"),
+            sequence.length
+              ? followUpTable(sequence, refresh, { showCompany: false })
+              : h(
+                  "div",
+                  { class: "row" },
+                  h("span", { class: "muted small" }, "No follow-ups scheduled for this email."),
+                  h("button", { class: "btn small", onclick: (e) => run(e.currentTarget, async () => { await post(`${draftBase}/send-attempts/${sentAttempt.id}/follow-ups`, { auto_send: false }); refresh(); }, "Follow-ups scheduled") }, "Schedule 2 follow-ups"),
+                ),
+          ]
+        : null,
       h(
         "details",
         null,
@@ -2371,6 +2400,87 @@
           ],
           history,
         ),
+      ),
+    );
+  }
+
+  const FOLLOW_UP_REASONS = {
+    CONVERSATION_REPLIED: "they replied",
+    CONVERSATION_POSITIVE_REPLY: "they replied (positive)",
+    CONVERSATION_NEGATIVE_REPLY: "they replied (not interested)",
+    CONVERSATION_BOUNCED: "the email bounced",
+    CONVERSATION_OPT_OUT: "they unsubscribed",
+    CONVERSATION_COMPLAINT: "spam complaint",
+    RECIPIENT_SUPPRESSED: "address is on the suppression list",
+    EMAIL_NOT_VERIFIED: "email no longer verified",
+    CONTACT_EXCLUDED: "person was excluded",
+    CONTACT_EMPLOYMENT_NOT_CURRENT: "person may have left",
+    SKIPPED_BY_USER: "skipped by you",
+    NOT_CONFIGURED: "SMTP is not configured",
+  };
+
+  function followUpTable(items, onChange, { showCompany = true } = {}) {
+    const edit = (f) => {
+      const subject = input({ value: f.subject, maxlength: 255 });
+      const body = h("textarea", { rows: 12, maxlength: 20000 }, f.body);
+      modal("Edit follow-up", [field("Subject", subject), field("Body", body)], {
+        onSubmit: async () => {
+          await patch(`/follow-ups/${f.id}`, { subject: subject.value, body: body.value });
+          toast("Follow-up saved");
+          onChange();
+        },
+      });
+    };
+    const act = (button, f, path, body, message) =>
+      run(button, async () => {
+        const result = await post(`/follow-ups/${f.id}/${path}`, body);
+        const items = Array.isArray(result) ? result : [result];
+        if (path === "send" && items[0]?.status !== "SENT") toast(`Not sent: ${FOLLOW_UP_REASONS[items[0]?.stop_reason] || items[0]?.stop_reason || items[0]?.status}`, true);
+        else toast(message);
+        onChange();
+      });
+    return table(
+      [
+        ...(showCompany
+          ? [{ label: "To", render: (f) => h("div", null, h("strong", null, f.contact_name || f.recipient || "Contact"), h("div", { class: "muted small" }, f.company_name || "")) }]
+          : []),
+        { label: "Step", render: (f) => `#${f.step}` },
+        { label: "Subject", render: (f) => h("details", null, h("summary", null, f.subject), h("div", { class: "email-preview" }, f.body)) },
+        { label: "Due / sent", render: (f) => fmtDate(f.sent_at || f.due_at) },
+        { label: "Status", render: (f) => h("div", null, badge(f.status), f.auto_send && ["SCHEDULED"].includes(f.status) ? h("span", { class: "badge info" }, "auto") : null, f.stop_reason ? h("div", { class: "muted small" }, FOLLOW_UP_REASONS[f.stop_reason] || f.stop_reason) : null) },
+        {
+          label: "",
+          render: (f) =>
+            ["SCHEDULED", "AWAITING_APPROVAL"].includes(f.status)
+              ? h(
+                  "div",
+                  { class: "row" },
+                  h("button", { class: "btn small primary", onclick: (e) => act(e.currentTarget, f, "send", undefined, "Follow-up sent") }, "Send now"),
+                  h("button", { class: "btn small", onclick: () => edit(f) }, "Edit"),
+                  h("button", { class: "btn small", onclick: (e) => act(e.currentTarget, f, "skip", { cancel_sequence: false }, "Skipped") }, "Skip"),
+                  h("button", { class: "btn small danger", onclick: (e) => act(e.currentTarget, f, "skip", { cancel_sequence: true }, "Sequence stopped") }, "Stop all"),
+                )
+              : null,
+        },
+      ],
+      items,
+      { empty: "Nothing here." },
+    );
+  }
+
+  async function viewFollowUps() {
+    const all = await get("/follow-ups");
+    const groups = [
+      ["Waiting for your approval", all.filter((f) => f.status === "AWAITING_APPROVAL"), "Due now. Send, edit or skip each one."],
+      ["Scheduled", all.filter((f) => f.status === "SCHEDULED").sort((a, b) => String(a.due_at).localeCompare(String(b.due_at))), "Sent automatically when marked auto; otherwise moved to approval when due."],
+      ["Recent", all.filter((f) => !["AWAITING_APPROVAL", "SCHEDULED"].includes(f.status)).slice(0, 50), "Sent, skipped and failed follow-ups."],
+    ];
+    return h(
+      "div",
+      null,
+      pageHead("Follow-ups", "Up to 2 follow-ups per email, in the same thread. Any reply, bounce or unsubscribe stops the sequence."),
+      groups.map(([title, items, hint]) =>
+        h("div", { class: "card" }, h("div", { class: "card-head" }, h("h2", null, `${title} (${items.length})`)), h("p", { class: "muted small" }, hint), followUpTable(items, refresh)),
       ),
     );
   }
