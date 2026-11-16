@@ -47,6 +47,7 @@ from marketingiq.application.role_resolver import (
 )
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.campaigns import CampaignDraft
+from marketingiq.domain.contact_imports import ImportedContact, ImportedContactStatus
 from marketingiq.domain.decision_makers import (
     ContactEvidence,
     ContactStatus,
@@ -96,6 +97,8 @@ VERIFY_MAP = {
 
 _DEFAULT = object()
 
+
+IMPORT_PROVIDER_KEY = "IMPORT"
 
 class _Operator:
     """Minimal provider identity for usage rows that have no registry provider (e.g. OpenAI)."""
@@ -526,6 +529,7 @@ class DecisionMakerService:
         )
         for observation in public_observations:
             observed_ids.add(self._merge(rel, product.id, qualification, observation).id)
+        observed_ids.update(self._import_phase(rel, product.id, qualification, report))
 
         hunter = self._provider("HUNTER")
         if allow_provider_credits and hunter is not None and hunter.configured:
@@ -572,6 +576,66 @@ class DecisionMakerService:
         summary = self.summary(rel.id, product.id)
         summary["run"] = {"outcome": outcome.value, "operations": report.as_dict()}
         return summary
+
+    def _import_phase(self, rel, product_id, qualification, report) -> set[str]:
+        """People from the organization's own lists (free); merged like any other source."""
+
+        rows = list(
+            self.session.scalars(
+                select(ImportedContact).where(
+                    ImportedContact.organization_id == self.tenant.organization_id,
+                    ImportedContact.organization_company_id == rel.id,
+                    ImportedContact.status != ImportedContactStatus.SUPPRESSED,
+                )
+            )
+        )
+        ids: set[str] = set()
+        for row in rows:
+            observation = Observation(
+                source="IMPORT",
+                provider_key=IMPORT_PROVIDER_KEY,
+                full_name=row.full_name,
+                first_name=row.first_name,
+                last_name=row.last_name,
+                title=row.job_title,
+                position_raw=row.job_title,
+                email=row.email,
+                linkedin=row.linkedin_url,
+                evidence=[
+                    {
+                        "source_type": EvidenceSourceType.MANUAL,
+                        "provider_key": IMPORT_PROVIDER_KEY,
+                        "provider_reference": f"list:{row.list_name}",
+                        "claimed_name": row.full_name,
+                        "claimed_title": row.job_title,
+                        "snippet": f"Imported from your list '{row.list_name}'",
+                        "retrieved_at": row.created_at,
+                    }
+                ],
+            )
+            existed = self._find_existing(rel, product_id, observation) is not None
+            contact = self._merge(rel, product_id, qualification, observation)
+            if not existed:
+                # Your own data: not licensed from a provider.
+                contact.classification = DataClassification.CUSTOMER_PROVIDED
+                contact.redistribution_status = RedistributionStatus.UNKNOWN
+            for channel in contact.channels:
+                if channel.source_provider == IMPORT_PROVIDER_KEY and row.email == channel.email:
+                    channel.origin = EmailOrigin.CUSTOMER_PROVIDED
+            if row.trusted and contact.review_status is None and contact.full_name:
+                contact.review_status = ReviewStatus.APPROVED.value
+                contact.review_note = f"Pre-approved: trusted list '{row.list_name}'"[:500]
+                contact.reviewed_by_user_id = row.created_by_user_id
+                contact.reviewed_at = self.now
+            if row.status == ImportedContactStatus.PENDING:
+                row.status = ImportedContactStatus.ATTACHED
+                row.attached_at = self.now
+            row.contact_id = row.contact_id or contact.id
+            ids.add(contact.id)
+        if rows:
+            report.notes.append(f"IMPORTED_PEOPLE_{len(rows)}")
+        self.session.flush()
+        return ids
 
     def _adopt_current_qualification(self, scope, qualification_id: str) -> None:
         """Carry people forward to the latest qualification (not those already in a draft)."""

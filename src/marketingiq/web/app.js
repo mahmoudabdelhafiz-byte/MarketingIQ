@@ -1272,6 +1272,73 @@
     );
   }
 
+  function openContactImport() {
+    const file = h("input", { type: "file", accept: ".csv,text/csv" });
+    const text = h("textarea", { rows: 8, placeholder: "company,website,first_name,last_name,title,email,linkedin\nAcme Logistics,acme.example,Sara,Ali,CIO,sara@acme.example," });
+    file.addEventListener("change", async () => {
+      if (file.files[0]) text.value = await file.files[0].text();
+    });
+    const listName = input({ required: true, maxlength: 120, placeholder: "e.g. GITEX 2026 leads" });
+    const trusted = h("input", { type: "checkbox" });
+    const report = h("div");
+    let previewed = false;
+    const show = (r, title) =>
+      clear(report).append(
+        h(
+          "div",
+          { class: "stack" },
+          h("h3", null, title),
+          kv([
+            ["Rows", r.total_rows],
+            ["People to import", r.imported],
+            ["Already imported", r.duplicates],
+            ["On the suppression list", r.suppressed],
+            ["New companies", r.new_companies],
+            ["Rows with problems", r.invalid_count],
+          ]),
+          r.invalid.length ? table([{ label: "Row", key: "row" }, { label: "Problem", key: "error" }], r.invalid.slice(0, 50)) : null,
+        ),
+      );
+    const doPreview = async () => {
+      const r = await post("/contact-imports/preview", { content: text.value });
+      previewed = true;
+      show(r, "Preview");
+    };
+    modal(
+      "Import contacts from your own list",
+      [
+        h(
+          "p",
+          { class: "muted small" },
+          "Columns (any order, common names accepted): company, website or domain, first_name, last_name or name, title, email, linkedin. Each row needs a name or a business email, and a company website or business email. Up to 2,000 rows. Companies are added to your list; each person joins the company's decision-makers once it is qualified, with the same role and email checks.",
+        ),
+        field("List name", listName),
+        field("CSV file", file),
+        field("…or paste CSV", text),
+        h("label", { class: "check" }, trusted, " Trusted list: pre-approve these people (you know they are current and relevant). Emails are still verified before sending."),
+        h("div", { class: "row" }, h("button", { class: "btn", type: "button", onclick: (e) => run(e.currentTarget, doPreview) }, "Preview")),
+        report,
+      ],
+      {
+        submitLabel: "Import",
+        onSubmit: async () => {
+          if (!previewed) {
+            await doPreview();
+            throw new ApiError(0, "Check the preview, then click Import again.");
+          }
+          const r = await post("/contact-imports", { content: text.value, list_name: listName.value.trim(), trusted: trusted.checked });
+          toast(`Imported ${r.imported} people at ${r.relationship_ids.length} companies`);
+          if (r.relationship_ids.length) {
+            const companies = (await get("/companies")).filter((c) => r.relationship_ids.includes(c.id));
+            openAdvanceCompanies(companies, { imported: true });
+          } else {
+            refresh();
+          }
+        },
+      },
+    );
+  }
+
   function importReport(result, isPreview) {
     return h(
       "div",
@@ -1329,19 +1396,23 @@
       pageHead("Companies", `${list.length} target companies`, [
         h("button", { class: "btn", onclick: () => openAdvanceCompanies(list) }, "Advance companies…"),
         h("button", { class: "btn", onclick: openImport }, "Import CSV"),
+        h("button", { class: "btn", onclick: openContactImport }, "Import contacts"),
         h("button", { class: "btn primary", onclick: () => openCompanyForm((c) => (location.hash = `#/companies/${c.id}`)) }, "+ Add company"),
       ]),
       h("div", { class: "card" }, h("div", { class: "field" }, filter), holder),
     );
   }
 
-  async function openAdvanceCompanies(list) {
+  async function openAdvanceCompanies(list, { imported = false } = {}) {
     const productList = await products();
     const product = select(productList.map((p) => ({ value: p.id, label: p.name })));
-    const scope = select([
-      { value: "discovered", label: "Companies marked “discovered”" },
-      { value: "all", label: "All companies" },
-    ]);
+    const scope = select(
+      [
+        { value: "discovered", label: "Companies marked “discovered”" },
+        { value: "all", label: imported ? "The companies from this import" : "All companies" },
+      ],
+      { value: imported ? "all" : "discovered" },
+    );
     const limit = input({ type: "number", min: 1, max: 100, value: 20 });
     const credits = h("input", { type: "checkbox", checked: true });
     const progress = h("div", { class: "muted small" });
