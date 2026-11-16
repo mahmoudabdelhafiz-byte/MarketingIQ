@@ -20,6 +20,9 @@ def create_database_engine(database_url: str | None = None) -> Engine:
         if recycle <= 0:
             raise RuntimeError("DB_POOL_RECYCLE_SECONDS must be greater than zero")
         options["pool_recycle"] = recycle
+        # Arabic and other non-Latin text needs utf8mb4 on the connection too.
+        if "charset" not in make_url(url).query:
+            options["connect_args"] = {"charset": "utf8mb4"}
 
     return create_engine(url, **options)
 

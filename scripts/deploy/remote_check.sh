@@ -65,7 +65,7 @@ else:
     stale = [str(f) for f in files if not (installed / f).is_file() or not filecmp.cmp(source / f, installed / f, shallow=False)]
     print(f"Installed code: {len(files) - len(stale)}/{len(files)} files match the app folder" + (f"; differ: {' '.join(stale[:8])}" if stale else ""))
 PY
-    python - <<'PY' 2>&1 | tail -n 2
+    python - <<'PY' 2>&1 | tail -n 4
 from sqlalchemy import text
 
 from marketingiq.infrastructure.database import create_database_engine
@@ -74,6 +74,19 @@ from marketingiq.infrastructure.schema_status import inspect_database_schema
 engine = create_database_engine()
 with engine.connect() as connection:
     print(f"Database: {connection.scalar(text('SELECT VERSION()'))}")
+    # Arabic and other non-Latin text needs utf8mb4 end to end (connection, database, tables).
+    conn_cs = connection.scalar(text("SELECT @@character_set_connection"))
+    db_cs = connection.scalar(text("SELECT @@character_set_database"))
+    rows = connection.execute(
+        text(
+            "SELECT COALESCE(c.character_set_name, '?') AS cs, COUNT(*) FROM information_schema.tables t "
+            "LEFT JOIN information_schema.collation_character_set_applicability c "
+            "ON c.collation_name = t.table_collation "
+            "WHERE t.table_schema = DATABASE() GROUP BY cs"
+        )
+    ).all()
+    tables = ", ".join(f"{cs}: {count}" for cs, count in rows)
+    print(f"Character sets: connection {conn_cs}, database {db_cs}, tables {tables}")
 status = inspect_database_schema(engine)
 print(
     f"Schema: {status.state} (database {', '.join(status.current_heads) or 'none'}, "
