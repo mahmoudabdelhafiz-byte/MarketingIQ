@@ -33,6 +33,9 @@
     OUTBOUND_QUALIFICATION_NOT_ACTIONABLE: "The lead is not qualified for outreach.",
     OUTBOUND_BUYER_ROLE_ALIGNMENT_REQUIRED: "The contact does not match the recommended buyer role.",
     OUTBOUND_IDEMPOTENCY_KEY_REUSED: "Send request conflicted with another draft. Try again.",
+    REPLY_ALREADY_HANDLED: "This reply was already answered or dismissed.",
+    REPLY_RECIPIENT_SUPPRESSED: "This person is unsubscribed or suppressed; the answer was not sent.",
+    REPLY_SMTP_NOT_CONFIGURED: "SMTP is not configured, so answers cannot be sent.",
     CAMPAIGN_DRAFT_LANGUAGE_UNSUPPORTED: "That draft language is not supported.",
     CAMPAIGN_DRAFT_VERIFIED_EMAIL_REQUIRED: "Verify the contact's email before drafting a campaign.",
     CAMPAIGN_DRAFT_VALUE_PROPOSITION_REQUIRED:
@@ -620,6 +623,7 @@
           link("#/companies", "Companies", "companies"),
           link("#/automation", "Automation", "automation"),
           link("#/follow-ups", "Follow-ups", "follow-ups"),
+          link("#/replies", "Replies", "replies"),
           link("#/insights", "Insights", "insights"),
           link("#/suppressions", "Suppression list", "suppressions"),
         ),
@@ -660,6 +664,7 @@
     [/^#\/insights$/, "insights", () => viewInsights()],
     [/^#\/suppressions$/, "suppressions", () => viewSuppressions()],
     [/^#\/follow-ups$/, "follow-ups", () => viewFollowUps()],
+    [/^#\/replies$/, "replies", () => viewReplies()],
   ];
 
   async function render() {
@@ -820,6 +825,8 @@
     if (!product) name.addEventListener("input", () => (slug.value = slugify(name.value)));
     const description = h("textarea", { maxlength: 10000 }, product?.description || "");
     const value = h("textarea", { maxlength: 10000 }, product?.value_proposition || "");
+    const knowledge = h("textarea", { maxlength: 20000, rows: 6 }, product?.knowledge_base || "");
+    const booking = input({ type: "url", value: product?.booking_url || "", maxlength: 500, pattern: "https://.+", placeholder: "https://calendly.com/you/20min" });
     const min = input({ type: "number", min: 0, value: product?.employee_min ?? "" });
     const max = input({ type: "number", min: 0, value: product?.employee_max ?? "" });
     const primary = input({ value: (product?.primary_buyer_roles || []).join(", ") });
@@ -831,6 +838,8 @@
         h("div", { class: "form-grid" }, field("Name", name), field("Slug", slug, "Lowercase letters, numbers and hyphens")),
         field("Description", description),
         field("Value proposition", value, "Required for campaign drafting: the core benefit for the buyer."),
+        field("Knowledge base for replies", knowledge, "FAQ, pricing notes, integrations, links. The reply assistant answers only from this and the value proposition."),
+        field("Meeting booking link", booking, "Optional: your Calendly / Google or Microsoft booking page, offered with two suggested times."),
         h("div", { class: "form-grid" }, field("Min employees", min), field("Max employees", max)),
         field("Primary buyer roles", primary, "Comma separated, e.g. CIO, IT Director, HR Director"),
         field("Secondary buyer roles", secondary, "Comma separated"),
@@ -845,6 +854,8 @@
             slug: slug.value.trim(),
             description: description.value.trim() || null,
             value_proposition: value.value.trim() || null,
+            knowledge_base: knowledge.value.trim() || null,
+            booking_url: booking.value.trim() || null,
             employee_min: numOrNull(min.value),
             employee_max: numOrNull(max.value),
             primary_buyer_roles: csv(primary.value),
@@ -965,6 +976,8 @@
           kv([
             ["Description", product.description],
             ["Value proposition", product.value_proposition],
+            ["Reply knowledge base", product.knowledge_base ? `${product.knowledge_base.length} characters` : "Not set"],
+            ["Booking link", product.booking_url],
             ["Employee range", `${product.employee_min ?? "any"} – ${product.employee_max ?? "any"}`],
             ["Primary buyer roles", product.primary_buyer_roles],
             ["Secondary buyer roles", product.secondary_buyer_roles],
@@ -2482,6 +2495,87 @@
       ],
       items,
       { empty: "Nothing here." },
+    );
+  }
+
+  const REPLY_INTENTS = {
+    MEETING_REQUEST: "Wants a meeting",
+    INTERESTED: "Interested",
+    QUESTION: "Question",
+    NOT_NOW: "Not now",
+    NOT_INTERESTED: "Not interested",
+    UNSUBSCRIBE: "Unsubscribe",
+    OUT_OF_OFFICE: "Out of office",
+    OTHER: "Other",
+  };
+
+  function replyCard(r) {
+    const subject = input({ value: r.suggested_subject || `Re: ${r.subject || ""}`, maxlength: 255 });
+    const body = h("textarea", { rows: 10, maxlength: 20000 }, r.suggested_body || "");
+    const intent = select(Object.entries(REPLY_INTENTS).map(([value, label]) => ({ value, label })), { value: r.intent });
+    intent.addEventListener("change", () => run(intent, async () => { await post(`/replies/${r.id}/intent`, { intent: intent.value }); }, "Intent saved"));
+    const act = (button, path, payload, message) => run(button, async () => { await post(`/replies/${r.id}/${path}`, payload); refresh(); }, message);
+    const send = (button, thenUnsubscribe) =>
+      run(button, async () => {
+        await post(`/replies/${r.id}/send`, { subject: subject.value.trim(), body: body.value.trim(), then_unsubscribe: thenUnsubscribe });
+        refresh();
+      }, thenUnsubscribe ? "Answer sent and contact unsubscribed" : "Answer sent");
+    const unsubscribeAsk = r.intent === "UNSUBSCRIBE";
+    return h(
+      "div",
+      { class: "card" },
+      h(
+        "div",
+        { class: "card-head" },
+        h("div", null, h("h2", null, r.contact_name || r.from_email || "Prospect"), h("div", { class: "muted small" }, `${r.company_name || ""} · ${r.product_name || ""} · ${fmtDate(r.received_at)}`)),
+        h("div", { class: "row" }, h("span", { class: "badge info" }, REPLY_INTENTS[r.intent] || r.intent), r.intent_source === "AI" ? h("span", { class: "badge" }, "AI") : null, r.outcome ? badge(r.outcome) : null),
+      ),
+      r.summary ? h("p", null, h("strong", null, "Summary: "), r.summary) : null,
+      h("div", { class: "email-preview" }, h("strong", null, r.subject || "(no subject)"), "\n\n", r.body_text || ""),
+      h("div", { class: "form-grid" }, field("Intent", intent), r.suggested_slots?.length ? field("Suggested times", h("div", null, r.suggested_slots.map((slot) => h("div", { class: "small" }, slot.label)))) : null),
+      !r.has_knowledge_base ? h("p", { class: "muted small" }, "Tip: add a knowledge base (and a booking link) to the product so the AI can answer questions; otherwise it says it will confirm and come back.") : null,
+      field("Answer subject", subject),
+      field("Answer", body, "Review before sending. Sent in the same email thread."),
+      h(
+        "div",
+        { class: "row" },
+        h("button", { class: "btn", onclick: (e) => act(e.currentTarget, "suggest", undefined, "Suggestion updated") }, "Suggest with AI"),
+        h("button", { class: "btn primary", onclick: (e) => send(e.currentTarget, false) }, "Send answer"),
+        unsubscribeAsk ? h("button", { class: "btn", onclick: (e) => send(e.currentTarget, true) }, "Send & unsubscribe") : null,
+        h("button", { class: "btn", onclick: (e) => act(e.currentTarget, "meeting-booked", {}, "Meeting recorded in the pipeline") }, "Meeting booked"),
+        h("button", { class: "btn", onclick: (e) => act(e.currentTarget, "not-interested", undefined, "Marked not interested") }, "Not interested"),
+        h("button", { class: "btn danger", onclick: (e) => act(e.currentTarget, "unsubscribe", undefined, "Unsubscribed") }, "Unsubscribe"),
+        h("button", { class: "btn", onclick: (e) => act(e.currentTarget, "dismiss", undefined, "Dismissed") }, "Dismiss"),
+      ),
+    );
+  }
+
+  async function viewReplies() {
+    const all = await get("/replies");
+    const open = all.filter((r) => r.status === "NEW");
+    const done = all.filter((r) => r.status !== "NEW").slice(0, 100);
+    return h(
+      "div",
+      null,
+      pageHead("Replies", "Prospect replies found by the mailbox scanner. Each one has a suggested answer with two meeting times; review it, send it, and record the outcome."),
+      open.length ? open.map(replyCard) : h("div", { class: "card" }, h("div", { class: "empty" }, "No replies waiting. Replies appear here after the mailbox scan (IMAP settings and its cron job).")),
+      h(
+        "div",
+        { class: "card" },
+        h("h2", null, `Handled (${done.length})`),
+        table(
+          [
+            { label: "From", render: (r) => h("div", null, h("strong", null, r.contact_name || r.from_email || ""), h("div", { class: "muted small" }, r.company_name || "")) },
+            { label: "Intent", render: (r) => REPLY_INTENTS[r.intent] || r.intent },
+            { label: "Reply", render: (r) => h("details", null, h("summary", null, r.subject || "(no subject)"), h("div", { class: "email-preview" }, r.body_text || ""), r.answer_body ? h("div", { class: "email-preview" }, h("strong", null, "Our answer: "), r.answer_body) : null) },
+            { label: "Status", render: (r) => h("div", null, badge(r.status), r.outcome ? h("div", { class: "muted small" }, r.outcome) : null) },
+            { label: "When", render: (r) => fmtDate(r.answered_at || r.received_at) },
+            { label: "", render: (r) => (r.outcome ? null : h("button", { class: "btn small", onclick: (e) => run(e.currentTarget, async () => { await post(`/replies/${r.id}/meeting-booked`, {}); refresh(); }, "Meeting recorded in the pipeline") }, "Meeting booked")) },
+          ],
+          done,
+          { empty: "Nothing handled yet." },
+        ),
+      ),
     );
   }
 

@@ -52,6 +52,10 @@ class ProductWrite(Schema):
     slug: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=100)
     description: str | None = Field(default=None, max_length=10000)
     value_proposition: str | None = Field(default=None, max_length=10000)
+    knowledge_base: str | None = Field(default=None, max_length=20000)
+    booking_url: str | None = Field(
+        default=None, max_length=500, pattern=r"^https://[^\s]+$"
+    )
     employee_min: int | None = Field(default=None, ge=0)
     employee_max: int | None = Field(default=None, ge=0)
     criteria: list[Criterion] = Field(default_factory=list, max_length=100)
