@@ -134,6 +134,7 @@ application root differs:
 */15 * * * * cd /home/<cpanel-user>/<application-root> && . /home/<cpanel-user>/virtualenv/<application-root>/3.12/bin/activate && eval "$(python -m marketingiq.jobs.print_htaccess_env)" && python -m marketingiq.jobs.run_company_discovery >> /home/<cpanel-user>/logs/miq-discovery.log 2>&1
 */15 * * * * cd /home/<cpanel-user>/<application-root> && . /home/<cpanel-user>/virtualenv/<application-root>/3.12/bin/activate && eval "$(python -m marketingiq.jobs.print_htaccess_env)" && python -m marketingiq.jobs.run_automation_policies >> /home/<cpanel-user>/logs/miq-automation.log 2>&1
 */15 * * * * cd /home/<cpanel-user>/<application-root> && . /home/<cpanel-user>/virtualenv/<application-root>/3.12/bin/activate && eval "$(python -m marketingiq.jobs.print_htaccess_env)" && python -m marketingiq.jobs.run_follow_ups >> /home/<cpanel-user>/logs/miq-follow-ups.log 2>&1
+*/10 * * * * cd /home/<cpanel-user>/<application-root> && . /home/<cpanel-user>/virtualenv/<application-root>/3.12/bin/activate && eval "$(python -m marketingiq.jobs.print_htaccess_env)" && python -m marketingiq.jobs.run_mailbox_engagement >> /home/<cpanel-user>/logs/miq-mailbox.log 2>&1
 ```
 
 Each job only acts on rules that are due, so a 15-minute cron interval is safe; the jobs take a

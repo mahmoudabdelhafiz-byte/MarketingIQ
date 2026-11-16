@@ -15,6 +15,7 @@ from marketingiq.api.learning_routes import register_learning_routes
 from marketingiq.api.orchestration_routes import register_orchestration_routes
 from marketingiq.api.outbound_routes import register_outbound_routes
 from marketingiq.api.pipeline_routes import register_pipeline_routes
+from marketingiq.api.reply_routes import register_reply_routes
 from marketingiq.application.campaigns import CampaignDraftService
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.campaigns import CampaignChannel
@@ -138,6 +139,7 @@ def register_campaign_routes(
 
     register_ai_campaign_routes(app, prefix, tenant_dependency, session_dependency)
     register_outbound_routes(app, prefix, tenant_dependency, session_dependency)
+    register_reply_routes(app, prefix, tenant_dependency, session_dependency)
     register_pipeline_routes(app, prefix, tenant_dependency, session_dependency)
     register_learning_routes(app, prefix, tenant_dependency, session_dependency)
     register_orchestration_routes(
