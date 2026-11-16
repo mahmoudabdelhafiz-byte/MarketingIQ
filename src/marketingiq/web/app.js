@@ -1309,10 +1309,59 @@
       "div",
       null,
       pageHead("Companies", `${list.length} target companies`, [
+        h("button", { class: "btn", onclick: () => openAdvanceCompanies(list) }, "Advance companies…"),
         h("button", { class: "btn", onclick: openImport }, "Import CSV"),
         h("button", { class: "btn primary", onclick: () => openCompanyForm((c) => (location.hash = `#/companies/${c.id}`)) }, "+ Add company"),
       ]),
       h("div", { class: "card" }, h("div", { class: "field" }, filter), holder),
+    );
+  }
+
+  async function openAdvanceCompanies(list) {
+    const productList = await products();
+    const product = select(productList.map((p) => ({ value: p.id, label: p.name })));
+    const scope = select([
+      { value: "discovered", label: "Companies marked “discovered”" },
+      { value: "all", label: "All companies" },
+    ]);
+    const limit = input({ type: "number", min: 1, max: 100, value: 20 });
+    const credits = h("input", { type: "checkbox", checked: true });
+    const progress = h("div", { class: "muted small" });
+    modal(
+      "Advance companies",
+      [
+        h("p", { class: "muted small" }, "Runs the safe steps for each company, one after another: research → fit → qualification → decision makers. It stops before drafting; nothing is emailed."),
+        h("div", { class: "form-grid" }, field("Product", product), field("Which companies", scope)),
+        field("At most", limit, "Companies per run (1–100)"),
+        h("label", { class: "check" }, credits, " Allow provider credits: Hunter company research (size, industry, country) and people search. Already-researched companies are not charged again within the freshness window."),
+        progress,
+      ],
+      {
+        submitLabel: "Run",
+        onSubmit: async () => {
+          const max = Math.max(1, Math.min(100, Number(limit.value) || 20));
+          const targets = list.filter((c) => scope.value === "all" || (c.lifecycle_status || "").toLowerCase() === "discovered").slice(0, max);
+          if (!targets.length) throw new ApiError(0, "No companies match that choice.");
+          const tally = { ready: 0, qualified: 0, research: 0, failed: 0 };
+          for (const [index, c] of targets.entries()) {
+            progress.textContent = `${index + 1} / ${targets.length}: ${c.canonical_name}…`;
+            try {
+              const result = await post(`/companies/${c.id}/automation/run?product_id=${encodeURIComponent(product.value)}`, {
+                allow_provider_credits: credits.checked,
+              });
+              const status = result.plan?.qualification_status;
+              if (result.plan?.state === "READY_FOR_HUMAN_CAMPAIGN_REVIEW") tally.ready += 1;
+              else if (["HIGH_PRIORITY", "QUALIFIED"].includes(status)) tally.qualified += 1;
+              else tally.research += 1;
+            } catch (error) {
+              if (error.status === 401) throw error;
+              tally.failed += 1;
+            }
+          }
+          toast(`Done: ${tally.ready} ready to email, ${tally.qualified} qualified (need contacts), ${tally.research} still need research or did not fit, ${tally.failed} failed.`);
+          refresh();
+        },
+      },
     );
   }
 
@@ -1401,13 +1450,14 @@
                 h("strong", null, step.step.replaceAll("_", " ").toLowerCase()),
                 " ",
                 badge(step.status),
-                step.requires_provider_credits ? h("span", { class: "badge warn" }, "uses credits") : null,
+                step.requires_provider_credits ? h("span", { class: "badge warn" }, "Hunter with credits") : null,
                 step.credit_retry_available ? h("span", { class: "badge info" }, "can retry with credits") : null,
                 h("div", { class: "muted small" }, step.reason),
               ),
             ),
           ),
         ),
+        plan.next_action_hint ? h("div", { class: "card stack" }, h("strong", null, "What to do next: "), plan.next_action_hint) : null,
         plan.state === "READY_FOR_HUMAN_CAMPAIGN_REVIEW"
           ? h("a", { class: "btn primary", href: `#/companies/${ctx.id}/campaigns` }, "Draft a campaign →")
           : null,
@@ -2045,17 +2095,76 @@
     const actionable = qualifications.filter((q) => ["HIGH_PRIORITY", "QUALIFIED"].includes(q.status));
     const qualSelect = select(actionable.map((q) => ({ value: q.qualification_id, label: `${ctx.productName(q.product_id)} · ${q.status}` })));
     const contactSelect = h("select");
+    const readinessBox = h("div", { class: "stack" });
+    const ALIGNED = ["EXACT", "STRONG", "PARTIAL"];
+    // Mirrors the server's drafting gates so the reason is visible before clicking Draft.
+    const readiness = (c) => {
+      const blockers = [];
+      if (c.review_status === "EXCLUDED") blockers.push({ code: "excluded", text: "excluded from outreach" });
+      else if (c.review_status !== "APPROVED" && ["FORMER", "CONFLICTING"].includes(c.employment_status)) blockers.push({ code: "employment", text: "may no longer work there" });
+      if (!ALIGNED.includes(c.buyer_role_match) && c.review_status !== "EXCLUDED") blockers.push({ code: "role", text: "role not matched to your buyer personas" });
+      const emails = c.emails || [];
+      if (!emails.length) blockers.push({ code: "no_email", text: "no email found" });
+      else if (!emails.some((e) => e.verification_status === "VALID")) blockers.push({ code: "unverified", text: "email not verified" });
+      return blockers;
+    };
+    const personAction = (contactId, path, body, message) => async (event) => {
+      await run(event.currentTarget, async () => {
+        await post(`${base}/decision-makers/${contactId}/${path}`, body);
+        state.draftContact = contactId;
+        refresh();
+      }, message);
+    };
+    const describeContact = () => {
+      clear(readinessBox);
+      const c = contacts.find((x) => x.id === contactSelect.value);
+      if (!c) return;
+      const blockers = readiness(c);
+      if (!blockers.length) {
+        readinessBox.append(h("div", { class: "muted small" }, "✓ Ready to draft."));
+        return;
+      }
+      const named = Boolean(c.full_name || (c.first_name && c.last_name));
+      append(readinessBox, [
+        h("div", { class: "small" }, h("strong", null, "Before drafting: "), blockers.map((b) => b.text).join("; "), "."),
+        h(
+          "div",
+          { class: "row" },
+          blockers.some((b) => b.code === "role" || b.code === "employment") && named
+            ? h("button", { class: "btn small", type: "button", onclick: personAction(c.id, "review", { action: "APPROVE", note: "Approved from Campaigns" }, "Approved") }, "Approve this person")
+            : null,
+          blockers.some((b) => b.code === "no_email") && c.first_name && c.last_name
+            ? h("button", { class: "btn small", type: "button", onclick: personAction(c.id, "find-email", {}, "Email search complete") }, "Find email (Hunter credit)")
+            : null,
+          blockers.some((b) => b.code === "unverified")
+            ? h("button", { class: "btn small", type: "button", onclick: personAction(c.id, "verify-email", {}, "Verification complete") }, "Verify email (Hunter credit)")
+            : null,
+          h("a", { class: "btn small", href: `#/companies/${ctx.id}/contacts` }, "Review evidence"),
+        ),
+        blockers.some((b) => b.code === "role")
+          ? h("p", { class: "muted small" }, "Approve only after checking the evidence. To match titles like this automatically, add them to a persona under Products & ICPs.")
+          : null,
+      ]);
+    };
     const fillContacts = () => {
       clear(contactSelect);
-      const eligible = contacts.filter((c) => c.qualification_id === qualSelect.value);
+      const eligible = contacts
+        .filter((c) => c.qualification_id === qualSelect.value && c.review_status !== "EXCLUDED")
+        .map((c) => ({ c, blockers: readiness(c) }))
+        .sort((a, b) => a.blockers.length - b.blockers.length);
       append(contactSelect, [
-        eligible.map((c) => {
-          const valid = (c.emails || []).some((e) => e.verification_status === "VALID");
-          return h("option", { value: c.id, selected: state.draftContact === c.id }, `${contactName(c.id)}${c.job_title ? ` — ${c.job_title}` : ""}${valid ? "" : " (email not verified)"}`);
-        }),
+        eligible.map(({ c, blockers }) =>
+          h(
+            "option",
+            { value: c.id, selected: state.draftContact === c.id },
+            `${blockers.length ? "○" : "●"} ${contactName(c.id)}${c.job_title ? ` — ${c.job_title}` : ""}${blockers.length ? ` (${blockers.map((b) => b.text).join(", ")})` : " (ready)"}`,
+          ),
+        ),
       ]);
       if (!eligible.length) contactSelect.append(h("option", { value: "" }, "No contacts for this qualification"));
+      describeContact();
     };
+    contactSelect.addEventListener("change", describeContact);
     qualSelect.addEventListener("change", fillContacts);
     fillContacts();
     const cta = input({ maxlength: 500, placeholder: "e.g. Book a 20-minute demo next week" });
@@ -2085,7 +2194,7 @@
         actionable.length === 0
           ? h("div", { class: "empty" }, "Qualify the company and find contacts first.")
           : [
-              h("div", { class: "form-grid" }, field("Qualification", qualSelect), field("Contact", contactSelect)),
+              h("div", { class: "form-grid" }, field("Qualification", qualSelect), h("div", null, field("Contact", contactSelect), readinessBox)),
               field("Call to action (optional)", cta),
               h(
                 "div",
