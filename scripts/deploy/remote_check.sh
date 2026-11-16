@@ -173,6 +173,30 @@ PY
   while IFS= read -r line; do [ -n "$line" ] && add "$line"; done <<< "$smtp_report"
 fi
 
+# How SMTP_FROM_NAME is stored in .htaccess (Passenger reads it from there); not a secret.
+if [ -f "$APP_ROOT/.htaccess" ]; then
+  from_report=$(python3 - "$APP_ROOT/.htaccess" <<'PY' 2>&1 | tail -n 3
+import re
+import sys
+
+data = open(sys.argv[1], "rb").read()
+match = re.search(rb"^\s*SetEnv\s+SMTP_FROM_NAME\s+(.*?)\s*$", data, re.M)
+if not match:
+    print("htaccess SMTP_FROM_NAME: not set")
+else:
+    raw = match.group(1)
+    try:
+        text, valid = raw.decode("utf-8"), "valid UTF-8"
+    except UnicodeDecodeError:
+        text, valid = raw.decode("utf-8", "replace"), "NOT valid UTF-8"
+    quoted = raw[:1] in (b'"', b"'")
+    print("htaccess SMTP_FROM_NAME: %d bytes, %s, quoted=%s, value=%r, hex=%s"
+          % (len(raw), valid, quoted, text, raw[:48].hex()))
+PY
+  )
+  while IFS= read -r line; do [ -n "$line" ] && add "$line"; done <<< "$from_report"
+fi
+
 # AI providers: free, read-only key and model-access probes (no searches or completions).
 if [ -n "$names" ]; then
   ai_report=$(
