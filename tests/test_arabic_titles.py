@@ -1,7 +1,11 @@
 """Arabic job titles are matched to personas (real titles from a Saudi company website)."""
 
 import pytest
+from sqlalchemy import select
+from test_contacts import seed_case
+from test_decision_makers import HOME, FakePublic, make_service, setup_personas
 
+from marketingiq.application.decision_makers import name_key
 from marketingiq.application.role_resolver import (
     PersonaSpec,
     PersonCandidate,
@@ -10,6 +14,7 @@ from marketingiq.application.role_resolver import (
     translate_arabic_title,
 )
 from marketingiq.domain.decision_makers import RoleMatch
+from marketingiq.domain.models import ContactCandidate
 
 PERSONAS = (
     PersonaSpec(
@@ -79,3 +84,61 @@ def test_prefixed_and_diacritic_forms():
 def test_english_titles_are_unchanged():
     assert translate_arabic_title("Chief Executive Officer") == "Chief Executive Officer"
     assert resolve("CEO").persona.id == "exec"
+
+
+ARABIC_LEADERSHIP = """<html><body><h1>القيادة</h1>
+<div class="member"><h3>الأستاذ عبد العزيز الكثيري</h3>
+<p>الرئيس التنفيذي – عضو اللجنة التنفيذية لشركة مهارة</p></div>
+<div class="member"><h3>الأستاذ علي العتيبي</h3><p>نائب الرئيس للمبيعات والعمليات</p></div>
+</body></html>"""
+
+
+def test_name_key_handles_arabic_names_and_honorifics():
+    assert name_key("الأستاذ عبد العزيز الكثيري") == "عبد العزيز الكثيري"
+    assert name_key("عبد العزيز الكثيري") == name_key("الاستاذ عبدُ العزيز الكثيري")
+    assert name_key("Dr. Sara Ahmed") == "sara ahmed"
+    assert name_key("") == ""
+
+
+def test_refreshing_an_arabic_leadership_page_keeps_one_record_per_person(session):
+    case = seed_case(session)
+    setup_personas(session, case)
+    public = FakePublic(pages={"/": HOME, "/about-us/leadership": ARABIC_LEADERSHIP})
+    rel = case["relationship"].id
+
+    first = make_service(session, case, public=public).discover(rel)
+    make_service(session, case, public=public).discover(rel, force_refresh=True)
+    make_service(session, case, public=public).discover(rel, force_refresh=True)
+
+    people = list(session.scalars(select(ContactCandidate)))
+    assert len(people) == 2
+    ceo = next(c for c in first["contacts"] if "الكثيري" in (c["full_name"] or ""))
+    assert ceo["persona_name"] == "Executive leadership"
+    assert ceo["role_match"] == "HIGH"
+
+
+def test_existing_duplicates_are_marked_excluded_not_deleted(session):
+    case = seed_case(session)
+    setup_personas(session, case)
+    public = FakePublic(pages={"/": HOME, "/about-us/leadership": ARABIC_LEADERSHIP})
+    rel = case["relationship"].id
+    make_service(session, case, public=public).discover(rel)
+    original = session.scalars(select(ContactCandidate)).first()
+    # A copy saved by the earlier, Latin-only duplicate check.
+    copy = ContactCandidate(
+        **{
+            c.name: getattr(original, c.name)
+            for c in ContactCandidate.__table__.columns
+            if c.name not in {"id", "created_at", "updated_at", "provider_contact_reference"}
+        }
+    )
+    session.add(copy)
+    session.flush()
+
+    make_service(session, case, public=public).discover(rel, force_refresh=True)
+
+    session.refresh(copy)
+    session.refresh(original)
+    assert copy.review_status == "EXCLUDED" and copy.review_note.startswith("Duplicate of")
+    assert original.review_status != "EXCLUDED"
+    assert session.get(ContactCandidate, copy.id) is not None

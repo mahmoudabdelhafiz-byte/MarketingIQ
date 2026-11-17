@@ -43,6 +43,7 @@ from marketingiq.application.role_resolver import (
     PersonaSpec,
     PersonCandidate,
     RoleResolver,
+    normalize_arabic,
     normalize_text,
 )
 from marketingiq.application.tenant import TenantContext
@@ -207,8 +208,22 @@ def split_name(full_name: str) -> tuple[str | None, str | None]:
     return tokens[0], " ".join(tokens[1:])
 
 
+# Honorifics that are not part of a person's name (English and Arabic, normalized forms).
+_HONORIFICS = frozenset(
+    {
+        "mr", "mrs", "ms", "miss", "dr", "eng", "prof", "sheikh", "sir",
+        "الاستاذ", "استاذ", "الدكتور", "دكتور", "د", "المهندس", "مهندس", "م", "الشيخ", "شيخ",
+        "السيد", "سيد", "السيده", "سيده", "الاستاذه", "استاذه",
+    }
+)  # fmt: skip
+
+
 def name_key(value: str | None) -> str:
-    return " ".join(re.findall(r"[a-z]+", (value or "").lower()))
+    """Comparable form of a person's name, for English and Arabic names alike."""
+
+    text = normalize_arabic((value or "").lower())
+    tokens = re.findall(r"[a-z]+|[\u0621-\u064a]+", text)
+    return " ".join(token for token in tokens if token not in _HONORIFICS)
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -530,6 +545,7 @@ class DecisionMakerService:
         for observation in public_observations:
             observed_ids.add(self._merge(rel, product.id, qualification, observation).id)
         observed_ids.update(self._import_phase(rel, product.id, qualification, report))
+        self._exclude_duplicates(rel, product.id)
 
         hunter = self._provider("HUNTER")
         if allow_provider_credits and hunter is not None and hunter.configured:
@@ -576,6 +592,33 @@ class DecisionMakerService:
         summary = self.summary(rel.id, product.id)
         summary["run"] = {"outcome": outcome.value, "operations": report.as_dict()}
         return summary
+
+    def _exclude_duplicates(self, rel, product_id) -> None:
+        """Earlier versions saved Arabic-named people again on every refresh. Keep the first
+        record of each person and mark later copies that have no email and no drafts as
+        excluded duplicates (nothing is deleted)."""
+
+        groups: dict[str, list[ContactCandidate]] = {}
+        for contact in self._scope_contacts(rel, product_id):
+            key = name_key(contact.full_name)
+            if key and contact.review_status != ReviewStatus.EXCLUDED.value:
+                groups.setdefault(key, []).append(contact)
+        for contacts in groups.values():
+            if len(contacts) < 2:
+                continue
+            contacts.sort(key=lambda c: (_aware(c.created_at) or self.now, c.id))
+            keeper = contacts[0]
+            for duplicate in contacts[1:]:
+                has_email = any(c.email for c in duplicate.channels)
+                has_draft = self.session.scalar(
+                    select(CampaignDraft.id).where(CampaignDraft.contact_id == duplicate.id)
+                )
+                if has_email or has_draft:
+                    continue
+                duplicate.review_status = ReviewStatus.EXCLUDED.value
+                duplicate.review_note = f"Duplicate of {keeper.full_name or keeper.id}"[:500]
+                duplicate.reviewed_at = self.now
+        self.session.flush()
 
     def _import_phase(self, rel, product_id, qualification, report) -> set[str]:
         """People from the organization's own lists (free); merged like any other source."""

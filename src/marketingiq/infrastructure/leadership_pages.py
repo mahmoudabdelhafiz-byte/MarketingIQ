@@ -51,8 +51,14 @@ BLOCK_TAGS = frozenset(
         "ol",
     }
 )
-HONORIFICS = re.compile(r"^(dr|eng|mr|mrs|ms|miss|prof|sheikh|sir|h\.?e)\.?\s+", re.I)
+HONORIFICS = re.compile(
+    r"^(dr|eng|mr|mrs|ms|miss|prof|sheikh|sir|h\.?e|"
+    r"الأستاذة|الأستاذ|الاستاذة|الاستاذ|أستاذ|الدكتورة|الدكتور|د|المهندسة|المهندس|م|الشيخ|السيدة|السيد)"
+    r"\.?\s+",
+    re.I,
+)
 NAME_TOKEN = re.compile(r"^[A-Z][A-Za-z'’\-]*\.?$")
+ARABIC_NAME_TOKEN = re.compile(r"^[\u0621-\u064a\u064b-\u0652]{2,}$")
 NOT_NAME_WORDS = frozenset(
     {
         "about",
@@ -231,6 +237,14 @@ def _clean_name(text: str) -> str | None:
     tokens = value.split()
     if not 2 <= len(tokens) <= 4 or len(value) > 60:
         return None
+    arabic = any(ARABIC_NAME_TOKEN.match(token) for token in tokens)
+    if arabic:
+        # Arabic names: every token Arabic letters, and no role words (نائب الرئيس, مدير ...).
+        if not all(ARABIC_NAME_TOKEN.match(token) for token in tokens):
+            return None
+        if set(normalize_text(value).split()) & DECISION_TITLE_WORDS:
+            return None
+        return " ".join(tokens)
     for token in tokens:
         if not NAME_TOKEN.match(token) and not NAME_TOKEN.match(token.title()):
             return None
