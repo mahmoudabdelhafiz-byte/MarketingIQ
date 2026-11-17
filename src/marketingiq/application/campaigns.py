@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from marketingiq.application.authorization import Permission, require_permission
@@ -14,6 +14,8 @@ from marketingiq.application.languages import (
     AUTO,
     DEFAULT_LANGUAGE,
     LANGUAGES,
+    country_code_from,
+    country_from_website,
     pack,
     resolve_language,
 )
@@ -29,6 +31,7 @@ from marketingiq.domain.models import (
     AuditLog,
     BuyerRoleMatch,
     Company,
+    CompanyFact,
     ContactCandidate,
     ContactEmail,
     DataClassification,
@@ -95,7 +98,7 @@ class CampaignDraftService:
         if company is None:
             raise NotFoundError("Company not found")
         try:
-            draft_language = resolve_language(language, company.country_code)
+            draft_language = resolve_language(language, self.company_country(company))
         except ValueError as error:
             raise ConflictError("CAMPAIGN_DRAFT_LANGUAGE_UNSUPPORTED") from error
         # The fixed template exists only for languages with a reviewed phrase pack.
@@ -483,6 +486,29 @@ class CampaignDraftService:
         if product is None:
             raise NotFoundError("Product not found")
         return product
+
+    def company_country(self, company: Company) -> str | None:
+        """Country for "Auto" language: the record, else a researched fact, else the web TLD."""
+        if company.country_code:
+            return company.country_code
+        facts = self.session.scalars(
+            select(CompanyFact.value)
+            .where(
+                CompanyFact.company_id == company.id,
+                CompanyFact.fact_key.in_(("country", "country_code", "headquarters_country")),
+                or_(
+                    CompanyFact.organization_id.is_(None),
+                    CompanyFact.organization_id == self.tenant.organization_id,
+                ),
+            )
+            .order_by(CompanyFact.observed_at.desc())
+            .limit(5)
+        )
+        for value in facts:
+            code = country_code_from(value)
+            if code:
+                return code
+        return country_from_website(company.website_url)
 
     def _has_verified_email(self, contact_id: str) -> bool:
         return (

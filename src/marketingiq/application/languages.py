@@ -149,3 +149,32 @@ def resolve_language(requested: str | None, country_code: str | None) -> str:
 def draft_language(personalization_snapshot: dict | None) -> str:
     language = (personalization_snapshot or {}).get("language")
     return language if language in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE
+
+
+_COUNTRY_NAMES = {
+    "saudi arabia": "SA", "ksa": "SA", "kingdom of saudi arabia": "SA", "السعودية": "SA",
+    "المملكة العربية السعودية": "SA", "united arab emirates": "AE", "uae": "AE",
+    "الامارات": "AE", "الإمارات": "AE", "egypt": "EG", "مصر": "EG", "kuwait": "KW",
+    "qatar": "QA", "bahrain": "BH", "oman": "OM", "jordan": "JO",
+}  # fmt: skip
+
+
+def country_code_from(value) -> str | None:
+    """'SA', 'Saudi Arabia' or 'السعودية' -> 'SA'; anything else -> None."""
+    if isinstance(value, dict):
+        value = value.get("code") or value.get("country_code") or value.get("name")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if len(text) == 2 and text.isalpha() and text.isascii():
+        return text.upper()
+    return _COUNTRY_NAMES.get(text.lower())
+
+
+def country_from_website(url: str | None) -> str | None:
+    """Country-code top-level domain (maharah.sa, x.com.sa) -> 'SA'."""
+    if not url:
+        return None
+    host = url.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0].lower().rstrip(".")
+    tld = host.rsplit(".", 1)[-1] if "." in host else ""
+    return tld.upper() if len(tld) == 2 and tld.isalpha() else None
