@@ -43,6 +43,13 @@ from marketingiq.infrastructure.campaign_ai_provider import PROMPT_VERSION, requ
 WORKFLOW_VERSION = "grounded-ai-campaign-draft-v1"
 
 
+PROMPT_FIELDS = frozenset(
+    {
+        "company_name", "product_name", "product_value_proposition", "value_proposition",
+        "buyer_role", "call_to_action", "recipient_first_name", "language",
+    }
+)  # fmt: skip
+
 class GroundedAICampaignService:
     """AI-assisted drafting constrained to approved MarketingIQ evidence and human review."""
 
@@ -89,7 +96,7 @@ class GroundedAICampaignService:
         if company is None:
             raise NotFoundError("Company not found")
         try:
-            draft_language = resolve_language(language, company.country_code)
+            draft_language = resolve_language(language, self.base.company_country(company))
         except ValueError as error:
             raise ConflictError("CAMPAIGN_DRAFT_LANGUAGE_UNSUPPORTED") from error
         cta = (call_to_action or pack(draft_language).default_cta).strip()
@@ -142,7 +149,7 @@ class GroundedAICampaignService:
                 draft_language,
                 language,
             )
-        except ValueError:
+        except ValueError as error:
             return self._fallback_or_raise(
                 attempt,
                 relationship_id,
@@ -153,6 +160,7 @@ class GroundedAICampaignService:
                 "GROUNDING_VALIDATION_FAILED",
                 draft_language,
                 language,
+                detail=str(error)[:200],
             )
 
         draft = CampaignDraft(
@@ -258,8 +266,12 @@ class GroundedAICampaignService:
         if language == "ar" and not any("\u0600" <= char <= "\u06ff" for char in body):
             raise ValueError("AI output is not in the requested language")
         allowed = {fact.fact_key for fact in facts}
-        if not set(used_fact_keys).issubset(allowed):
-            raise ValueError("AI referenced unsupported grounding keys")
+        # The model sometimes lists the prompt's own fields (company_name, ...) as "facts used".
+        unknown = set(used_fact_keys) - allowed - PROMPT_FIELDS
+        if unknown:
+            raise ValueError(
+                "AI referenced unsupported grounding keys: " + ", ".join(sorted(unknown))[:150]
+            )
         forbidden = (
             "we know you are looking for",
             "your current project",
@@ -288,6 +300,7 @@ class GroundedAICampaignService:
         category: str,
         draft_language: str = "en",
         requested_language: str | None = None,
+        detail: str | None = None,
     ) -> CampaignDraft:
         attempt.error_category = category
         attempt.completed_at = self.now
@@ -311,6 +324,7 @@ class GroundedAICampaignService:
             **(draft.personalization_snapshot or {}),
             # Shown on the draft so a person knows why the template was used instead of AI.
             "ai_fallback_reason": category,
+            **({"ai_fallback_detail": detail} if detail else {}),
             **({"requested_language": requested_language} if requested_language else {}),
         }
         attempt.draft_id = draft.id
