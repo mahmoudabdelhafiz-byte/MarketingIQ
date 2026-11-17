@@ -714,3 +714,28 @@ def test_hunter_search_retries_at_plan_limit_and_keeps_hunter_error_text():
         always_bad.search_contacts("example.test", 5)
     assert "wrong_params - Bad department" in str(caught.value)
     assert "super-secret-key" not in str(caught.value)
+
+
+def test_hunter_verifier_waits_longer_and_reports_timeouts_and_in_progress():
+    seen = {}
+
+    def slow(request: httpx.Request):
+        seen["timeout"] = request.extensions.get("timeout", {}).get("read")
+        raise httpx.ReadTimeout("slow", request=request)
+
+    provider = HunterProvider(
+        api_key="super-secret-key", client=httpx.Client(transport=httpx.MockTransport(slow))
+    )
+    with pytest.raises(ProviderError, match="did not answer within 35 seconds"):
+        provider.verify_email("a@example.test")
+    assert seen["timeout"] == 35
+
+    pending = HunterProvider(
+        api_key="k",
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(202, json={"data": {}}, request=request)
+            )
+        ),
+    )
+    assert pending.verify_email("a@example.test").contacts[0].reference == "unknown"
