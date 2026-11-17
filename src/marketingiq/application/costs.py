@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from marketingiq.application.authorization import Permission, require_permission
+from marketingiq.application.email_policy import sendable_condition
 from marketingiq.application.tenant import TenantContext
 from marketingiq.domain.campaign_ai import CampaignAIGenerationAttempt
 from marketingiq.domain.campaigns import CampaignDraft
@@ -26,7 +27,6 @@ from marketingiq.domain.models import (
     AuditLog,
     ContactCandidate,
     ContactEmail,
-    EmailVerificationStatus,
     LeadQualification,
     OrganizationCompany,
     Product,
@@ -289,7 +289,7 @@ class CostReportService:
                 .join(ContactCandidate, ContactCandidate.id == ContactEmail.contact_id)
                 .where(
                     ContactCandidate.organization_id == org,
-                    ContactEmail.verification_status == EmailVerificationStatus.VALID,
+                    sendable_condition(),
                     ContactEmail.verified_at >= start,
                     ContactEmail.verified_at < end,
                 )

@@ -1157,6 +1157,7 @@ class DecisionMakerService:
                     EmailVerificationStatus(c.verification_status),
                     _aware(c.verified_at),
                     c.origin,
+                    c.verification_score,
                 )
                 for c in contact.channels
             ]
@@ -1437,7 +1438,11 @@ class DecisionMakerService:
     def _row(self, contact: ContactCandidate) -> dict[str, Any]:
         emails = [
             EmailView(
-                c.email, EmailVerificationStatus(c.verification_status), c.verified_at, c.origin
+                c.email,
+                EmailVerificationStatus(c.verification_status),
+                c.verified_at,
+                c.origin,
+                c.verification_score,
             )
             for c in contact.channels
         ]
@@ -1517,6 +1522,7 @@ class DecisionMakerService:
                             EmailVerificationStatus(c.verification_status),
                             c.verified_at,
                             c.origin,
+                            c.verification_score,
                         )
                     ),
                 }
