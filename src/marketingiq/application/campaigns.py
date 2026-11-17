@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from marketingiq.application.authorization import Permission, require_permission
 from marketingiq.application.decision_makers import targeting_block_reason
+from marketingiq.application.email_policy import sendable_condition
 from marketingiq.application.errors import ConflictError, NotFoundError
 from marketingiq.application.fit_freshness import FitAssessmentFreshnessService
 from marketingiq.application.languages import (
@@ -31,7 +32,6 @@ from marketingiq.domain.models import (
     ContactCandidate,
     ContactEmail,
     DataClassification,
-    EmailVerificationStatus,
     LeadQualification,
     OrganizationCompany,
     Product,
@@ -489,7 +489,7 @@ class CampaignDraftService:
             self.session.scalar(
                 select(ContactEmail.id).where(
                     ContactEmail.contact_id == contact_id,
-                    ContactEmail.verification_status == EmailVerificationStatus.VALID,
+                    sendable_condition(),
                 )
             )
             is not None

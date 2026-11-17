@@ -2336,6 +2336,8 @@
     const contactSelect = h("select");
     const readinessBox = h("div", { class: "stack" });
     const ALIGNED = ["EXACT", "STRONG", "PARTIAL"];
+    // Same rule as the server (email_policy.py): verified, or accept-all with Hunter score 80+.
+    const sendableEmail = (e) => e.verification_status === "VALID" || (e.verification_status === "ACCEPT_ALL" && (e.verification_score || 0) >= 80);
     // Mirrors the server's drafting gates so the reason is visible before clicking Draft.
     const readiness = (c) => {
       const blockers = [];
@@ -2344,7 +2346,7 @@
       if (!ALIGNED.includes(c.buyer_role_match) && c.review_status !== "EXCLUDED") blockers.push({ code: "role", text: "role not matched to your buyer personas" });
       const emails = c.emails || [];
       if (!emails.length) blockers.push({ code: "no_email", text: "no email found" });
-      else if (!emails.some((e) => e.verification_status === "VALID")) blockers.push({ code: "unverified", text: "email not verified" });
+      else if (!emails.some(sendableEmail)) blockers.push({ code: "unverified", text: "email not verified" });
       return blockers;
     };
     const personAction = (contactId, path, body, message) => async (event) => {
@@ -2360,7 +2362,13 @@
       if (!c) return;
       const blockers = readiness(c);
       if (!blockers.length) {
-        readinessBox.append(h("div", { class: "muted small" }, "✓ Ready to draft."));
+        const acceptAll = !(c.emails || []).some((e) => e.verification_status === "VALID");
+        readinessBox.append(
+          h("div", { class: "muted small" }, "✓ Ready to draft."),
+          acceptAll
+            ? h("div", { class: "small" }, badge("ACCEPT_ALL"), " This company's mail server accepts every address, so the mailbox can't be fully confirmed. Hunter's score for this address is 80 or more.")
+            : "",
+        );
         return;
       }
       const named = Boolean(c.full_name || (c.first_name && c.last_name));

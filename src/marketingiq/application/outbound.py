@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from marketingiq.application.authorization import Permission, require_permission
 from marketingiq.application.decision_makers import targeting_block_reason
+from marketingiq.application.email_policy import sendable_condition, sendable_order
 from marketingiq.application.errors import ConflictError, NotFoundError
 from marketingiq.application.fit_freshness import FitAssessmentFreshnessService
 from marketingiq.application.follow_up_stops import stop_pending_follow_ups
@@ -25,7 +26,6 @@ from marketingiq.domain.models import (
     BuyerRoleMatch,
     ContactCandidate,
     ContactEmail,
-    EmailVerificationStatus,
     LeadQualification,
     OrganizationCompany,
     QualificationStatus,
@@ -352,9 +352,9 @@ class OutboundSendService:
             select(ContactEmail)
             .where(
                 ContactEmail.contact_id == contact_id,
-                ContactEmail.verification_status == EmailVerificationStatus.VALID,
+                sendable_condition(),
             )
-            .order_by(ContactEmail.verified_at.desc(), ContactEmail.id.desc())
+            .order_by(sendable_order(), ContactEmail.verified_at.desc(), ContactEmail.id.desc())
             .limit(1)
         )
         if email is None:
