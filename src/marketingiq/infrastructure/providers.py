@@ -352,15 +352,19 @@ class HunterProvider:
             credits_remaining=credits.get("available"),
         )
 
-    def _request(self, path: str, params: dict) -> tuple[dict, object]:
+    def _request(self, path: str, params: dict, timeout: float = 10) -> tuple[dict, object]:
         if not self.configured:
             raise ProviderNotConfigured("Hunter is not configured")
         try:
-            response = (self.client or httpx.Client(timeout=10)).get(
-                f"https://api.hunter.io/v2/{path}", params={**params, "api_key": self._api_key}
+            response = (self.client or httpx.Client(timeout=timeout)).get(
+                f"https://api.hunter.io/v2/{path}",
+                params={**params, "api_key": self._api_key},
+                timeout=timeout,
             )
+        except httpx.TimeoutException as error:
+            raise ProviderError(f"Hunter did not answer within {int(timeout)} seconds") from error
         except httpx.HTTPError as error:
-            raise ProviderError("Hunter request failed") from error
+            raise ProviderError(f"Hunter request failed ({type(error).__name__})") from error
         if response.status_code == 429:
             raise ProviderRateLimited("Hunter rate limit reached")
         if response.status_code in {401, 403}:
@@ -488,8 +492,11 @@ class HunterProvider:
         return self._result(payload, response, (self._contact(data),) if data.get("email") else ())
 
     def verify_email(self, email: str) -> ContactProviderResult:
-        payload, response = self._request("email-verifier", {"email": email})
+        # Mailbox checks can take Hunter ~20s on slow mail servers; 202 means "still checking".
+        payload, response = self._request("email-verifier", {"email": email}, timeout=35)
         data = payload.get("data") or {}
+        if getattr(response, "status_code", 200) == 202:
+            data = {**data, "status": data.get("status") or "unknown"}
         if not isinstance(data, dict):
             raise ProviderMalformedResponse("Hunter returned malformed verification")
         contact = ProviderContact(

@@ -1296,6 +1296,7 @@ class DecisionMakerService:
             usage.response_status, usage.error_category = "FAILURE", error.category
             usage.completed_at = self.now
             report.notes.append(f"EMAIL_VERIFY_{error.category}")
+            report.notes.append(f"Hunter said: {str(error)[:200]}")
             return
         found = result.contacts[0] if result.contacts else None
         raw = (found.reference or "unknown").lower() if found else "unknown"
