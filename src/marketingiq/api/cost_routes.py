@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from marketingiq.application.costs import CostReportService
+from marketingiq.application.dashboard import DashboardService
 from marketingiq.application.tenant import TenantContext
 
 
@@ -37,6 +38,14 @@ def register_cost_routes(
     @app.get(prefix + "/costs/report")
     def cost_report(svc: Costs, days: Annotated[int, Query(ge=1, le=366)] = 30):
         return svc.report(days)
+
+    @app.get(prefix + "/dashboard")
+    def dashboard(
+        context: Annotated[TenantContext, Depends(tenant_dependency)],
+        db: Annotated[Session, Depends(session_dependency)],
+        days: Annotated[int, Query(ge=1, le=366)] = 90,
+    ):
+        return DashboardService(db, context).build(days)
 
     @app.get(prefix + "/costs/settings")
     def cost_settings(svc: Costs):

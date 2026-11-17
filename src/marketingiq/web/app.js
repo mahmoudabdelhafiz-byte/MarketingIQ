@@ -649,6 +649,7 @@
           link("#/products", "Products & ICPs", "products"),
           link("#/suppressions", "Do-not-contact list", "suppressions"),
           group("Reports"),
+          link("#/reports", "Dashboard", "reports"),
           link("#/insights", "Insights", "insights"),
           link("#/costs", "Costs", "costs"),
         ),
@@ -691,6 +692,7 @@
     [/^#\/follow-ups$/, "follow-ups", () => viewFollowUps()],
     [/^#\/replies$/, "replies", () => viewReplies()],
     [/^#\/costs$/, "costs", () => viewCosts()],
+    [/^#\/reports$/, "reports", () => viewReports()],
   ];
 
   async function render() {
@@ -2920,6 +2922,265 @@
           ],
           report.per_product,
           { empty: "No emails sent in this period." },
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------------------
+  // Charts (plain SVG: no chart library, nothing loaded from outside)
+
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  function svg(tag, attrs, ...children) {
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const [key, value] of Object.entries(attrs || {})) if (value !== null && value !== undefined) el.setAttribute(key, String(value));
+    for (const child of children.flat(Infinity)) if (child) el.append(child instanceof Node ? child : document.createTextNode(String(child)));
+    return el;
+  }
+
+  function niceMax(value) {
+    if (value <= 4) return 4;
+    const step = Math.pow(10, Math.floor(Math.log10(value)));
+    const top = [1, 2, 2.5, 5, 10].map((m) => m * step).find((n) => n >= value);
+    return top || value;
+  }
+
+  function chartTooltip(container) {
+    const tip = h("div", { class: "chart-tip", role: "status" });
+    container.append(tip);
+    return {
+      show(x, y, html) {
+        clear(tip).append(...html);
+        tip.style.display = "block";
+        const box = container.getBoundingClientRect();
+        const left = Math.min(Math.max(x + 12, 0), box.width - tip.offsetWidth - 4);
+        tip.style.left = `${left}px`;
+        tip.style.top = `${Math.max(y - tip.offsetHeight - 10, 0)}px`;
+      },
+      hide() {
+        tip.style.display = "none";
+      },
+    };
+  }
+
+  // Weekly lines: one axis (all counts), direct end labels + legend, crosshair tooltip.
+  function lineChart(points, series, { height = 260 } = {}) {
+    const wrap = h("div", { class: "chart" });
+    // Draw at roughly the on-screen width so text stays at its real size on phones too.
+    const width = Math.max(340, Math.min(1000, (window.innerWidth || 1000) - (window.innerWidth < 900 ? 40 : 320)));
+    const pad = { top: 16, right: 92, bottom: 28, left: 36 };
+    const plotW = width - pad.left - pad.right;
+    const plotH = height - pad.top - pad.bottom;
+    const max = niceMax(Math.max(1, ...points.flatMap((p) => series.map((s) => p[s.key] || 0))));
+    const x = (i) => pad.left + (points.length <= 1 ? plotW / 2 : (i * plotW) / (points.length - 1));
+    const y = (v) => pad.top + plotH - (v / max) * plotH;
+    const ticks = [0, max / 2, max];
+    const root = svg("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": `Weekly ${series.map((s) => s.label.toLowerCase()).join(", ")}` });
+    ticks.forEach((t) => {
+      root.append(svg("line", { x1: pad.left, x2: pad.left + plotW, y1: y(t), y2: y(t), class: "grid" }));
+      root.append(svg("text", { x: pad.left - 8, y: y(t) + 4, "text-anchor": "end", class: "axis" }, String(Math.round(t))));
+    });
+    const labelEvery = Math.max(1, Math.ceil(points.length / 7));
+    points.forEach((p, i) => {
+      if (i % labelEvery === 0 || i === points.length - 1)
+        root.append(svg("text", { x: x(i), y: height - 8, "text-anchor": "middle", class: "axis" }, new Date(p.week_start).toLocaleDateString(undefined, { day: "numeric", month: "short" })));
+    });
+    // End labels, nudged apart so they never overlap.
+    const ends = series.map((s) => ({ s, y: y(points.at(-1)?.[s.key] || 0) })).sort((a, b) => a.y - b.y);
+    for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 14) ends[i].y = ends[i - 1].y + 14;
+    series.forEach((s) => {
+      const d = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[s.key] || 0).toFixed(1)}`).join(" ");
+      root.append(svg("path", { d, class: "line", style: `stroke: var(${s.color})` }));
+      const last = points.length - 1;
+      if (last >= 0) root.append(svg("circle", { cx: x(last), cy: y(points[last][s.key] || 0), r: 4, class: "dot", style: `fill: var(${s.color})` }));
+    });
+    ends.forEach(({ s, y: ly }) => {
+      const value = points.at(-1)?.[s.key] || 0;
+      root.append(svg("text", { x: pad.left + plotW + 10, y: ly + 4, class: "end-label" }, `${s.label} ${value}`));
+    });
+    const cross = svg("line", { y1: pad.top, y2: pad.top + plotH, class: "crosshair", visibility: "hidden" });
+    root.append(cross);
+    const hit = svg("rect", { x: pad.left, y: pad.top, width: plotW, height: plotH, fill: "transparent" });
+    root.append(hit);
+    wrap.append(root);
+    const tip = chartTooltip(wrap);
+    const move = (event) => {
+      const box = root.getBoundingClientRect();
+      const sx = ((event.clientX - box.left) / box.width) * width;
+      const i = Math.max(0, Math.min(points.length - 1, Math.round(((sx - pad.left) / plotW) * (points.length - 1))));
+      const p = points[i];
+      if (!p) return;
+      cross.setAttribute("x1", x(i));
+      cross.setAttribute("x2", x(i));
+      cross.setAttribute("visibility", "visible");
+      tip.show((x(i) / width) * box.width, (pad.top / height) * box.height + 40, [
+        h("strong", null, `Week of ${new Date(p.week_start).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`),
+        ...series.map((s) => h("div", { class: "tip-row" }, h("span", { class: "key", style: `background: var(${s.color})` }), `${s.label}: ${p[s.key] || 0}`)),
+      ]);
+    };
+    hit.addEventListener("mousemove", move);
+    hit.addEventListener("mouseleave", () => {
+      cross.setAttribute("visibility", "hidden");
+      tip.hide();
+    });
+    const legend = h(
+      "div",
+      { class: "legend" },
+      series.map((s) => h("span", null, h("span", { class: "key", style: `background: var(${s.color})` }), s.label)),
+    );
+    return h("div", null, legend, wrap);
+  }
+
+  // Horizontal bars for one measure: one colour, value at the bar end, tooltip on hover.
+  function barList(rows, { format = (v) => String(v), note = null } = {}) {
+    const max = Math.max(1, ...rows.map((r) => r.value));
+    const wrap = h("div", { class: "bars chart" });
+    const tip = chartTooltip(wrap);
+    rows.forEach((r) => {
+      const row = h(
+        "div",
+        { class: "bar-row", tabindex: "0" },
+        h("span", { class: "bar-label" }, r.label),
+        h("span", { class: "bar-track" }, h("span", { class: "bar", style: `width: ${r.value ? Math.max(2, (r.value / max) * 100) : 0}%` })),
+        h("span", { class: "bar-value" }, format(r.value)),
+      );
+      const show = () => {
+        const box = wrap.getBoundingClientRect();
+        const rb = row.getBoundingClientRect();
+        tip.show(rb.left - box.left + rb.width * 0.4, rb.top - box.top + 4, [h("strong", null, r.label), h("div", null, r.detail || format(r.value))]);
+      };
+      row.addEventListener("mouseenter", show);
+      row.addEventListener("focus", show);
+      row.addEventListener("mouseleave", () => tip.hide());
+      row.addEventListener("blur", () => tip.hide());
+      wrap.append(row);
+    });
+    return h("div", null, wrap, note ? h("p", { class: "muted small" }, note) : null);
+  }
+
+  // ---------------------------------------------------------------------------------------
+  // Dashboard (Reports)
+
+  const INTENT_LABELS = { MEETING_REQUEST: "Wants a meeting", INTERESTED: "Interested", QUESTION: "Question", NOT_NOW: "Not now", NOT_INTERESTED: "Not interested", UNSUBSCRIBE: "Unsubscribe", OUT_OF_OFFICE: "Out of office", OTHER: "Other" };
+
+  async function viewReports() {
+    const days = state.reportDays || 90;
+    const data = await get(`/dashboard?days=${days}`);
+    const period = select(
+      [
+        { value: "30", label: "Last 30 days" },
+        { value: "90", label: "Last 90 days" },
+        { value: "180", label: "Last 6 months" },
+        { value: "365", label: "Last 12 months" },
+      ],
+      { value: String(data.period.days), "aria-label": "Period" },
+    );
+    period.addEventListener("change", () => {
+      state.reportDays = Number(period.value);
+      refresh();
+    });
+    const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
+    const money = (v) => (v == null ? "—" : `${data.currency} ${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`);
+    const delta = (k, fmt, lowerIsBetter = false) => {
+      const { value, previous } = data.kpis[k];
+      if (value == null || previous == null) return h("div", { class: "delta" }, "No earlier period to compare");
+      const diff = value - previous;
+      if (Math.abs(diff) < 1e-9) return h("div", { class: "delta" }, "Same as the previous period");
+      const better = lowerIsBetter ? diff < 0 : diff > 0;
+      return h("div", { class: `delta ${better ? "up" : "down"}` }, `${diff > 0 ? "▲" : "▼"} ${fmt(Math.abs(diff))} vs previous ${data.period.days} days`);
+    };
+    const tile = (label, value, sub) => h("div", { class: "card stat" }, h("div", { class: "label" }, label), h("div", { class: "value" }, value), sub);
+    const k = data.kpis;
+    const hasActivity = data.weekly.some((w) => w.emails_sent || w.replies || w.meetings);
+    const tableView = (headers, rows) =>
+      h("details", { class: "table-view" }, h("summary", null, "Show as table"), table(headers.map(([label, key]) => ({ label, key })), rows));
+
+    return h(
+      "div",
+      null,
+      pageHead("Dashboard", "How outreach is performing: activity, results and where each lead stands.", [period]),
+      h(
+        "div",
+        { class: "grid cols-5 kpis" },
+        tile("Emails sent", String(k.emails_sent.value), delta("emails_sent", (v) => String(v))),
+        tile("Reply rate", pct(k.reply_rate.value), delta("reply_rate", (v) => `${Math.round(v * 100)} pts`)),
+        tile("Meetings", String(k.meetings.value), delta("meetings", (v) => String(v))),
+        tile("Open opportunities", String(k.open_opportunities.value), h("div", { class: "delta" }, "Contacted to proposal")),
+        tile("Cost per meeting", money(k.cost_per_meeting.value), delta("cost_per_meeting", money, true)),
+      ),
+      h(
+        "div",
+        { class: "card" },
+        h("div", { class: "card-head" }, h("h2", null, "Weekly activity")),
+        hasActivity
+          ? lineChart(data.weekly, [
+              { key: "emails_sent", label: "Emails sent", color: "--chart-1" },
+              { key: "replies", label: "Replies", color: "--chart-2" },
+              { key: "meetings", label: "Meetings", color: "--chart-3" },
+            ])
+          : h("div", { class: "empty" }, "No emails sent in this period yet. Send your first approved email from a company's Campaigns tab."),
+        tableView([["Week of", "week_start"], ["Emails sent", "emails_sent"], ["Replies", "replies"], ["Meetings", "meetings"]], data.weekly),
+      ),
+      h(
+        "div",
+        { class: "grid cols-2" },
+        h(
+          "div",
+          { class: "card" },
+          h("h2", null, "Funnel"),
+          h("p", { class: "muted small" }, "From companies added to deals won in this period. Each step counts what happened in the period."),
+          barList(data.funnel.map((f) => ({ label: f.label, value: f.value }))),
+        ),
+        h(
+          "div",
+          { class: "card" },
+          h("h2", null, "Pipeline today"),
+          h("p", { class: "muted small" }, "Where every opportunity stands now."),
+          barList(data.pipeline.map((p) => ({ label: humanize(p.stage), value: p.count }))),
+          h("a", { href: "#/companies", class: "small" }, "Open companies"),
+        ),
+      ),
+      h(
+        "div",
+        { class: "grid cols-2" },
+        h(
+          "div",
+          { class: "card" },
+          h("h2", null, "Results by product"),
+          data.per_product.length
+            ? barList(
+                data.per_product.map((p) => ({
+                  label: p.product_name,
+                  value: p.reply_rate || 0,
+                  detail: `${p.emails_sent} sent, ${p.replies} replies, ${p.meetings} meetings (${pct(p.meeting_rate)} meeting rate)`,
+                })),
+                { format: pct, note: "Reply rate per product. Hover a bar for emails, replies and meetings." },
+              )
+            : h("div", { class: "empty" }, "No emails sent in this period."),
+        ),
+        h(
+          "div",
+          { class: "card" },
+          h("h2", null, "What prospects replied"),
+          data.reply_intents.length
+            ? barList(data.reply_intents.map((r) => ({ label: INTENT_LABELS[r.intent] || humanize(r.intent), value: r.count })))
+            : h("div", { class: "empty" }, "No replies captured yet. Replies appear after the mailbox scan."),
+          h("a", { href: "#/replies", class: "small" }, "Open replies"),
+        ),
+      ),
+      h(
+        "div",
+        { class: "card" },
+        h("h2", null, "Recent activity"),
+        table(
+          [
+            { label: "When", render: (r) => fmtDate(r.at) },
+            { label: "What", render: (r) => ({ EMAIL_SENT: "Email sent", REPLY: "Reply received", MEETING: "Meeting booked" })[r.kind] || humanize(r.kind) },
+            { label: "Company", render: (r) => r.company || "—" },
+            { label: "Person", render: (r) => r.contact || "—" },
+          ],
+          data.recent,
+          { empty: "Nothing in this period yet." },
         ),
       ),
     );

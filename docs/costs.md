@@ -29,3 +29,11 @@ tokens yet, so they are not in the AI lines.
 `GET /organizations/{org}/costs/report?days=30`, `GET` and `PUT /organizations/{org}/costs/settings`
 (`currency`, `provider_credit_cost`, `ai_input_per_million`, `ai_output_per_million`,
 `web_search_cost`, `monthly_fixed_cost`). Changing prices needs the catalog-write permission.
+
+## Dashboard
+
+**Reports → Dashboard** (`GET /organizations/{org}/dashboard?days=30|90|180|365`) shows, for the
+period: emails sent, reply rate, meetings, open opportunities and cost per meeting (each compared
+with the previous period); weekly emails, replies and meetings; the funnel; where every opportunity
+stands now; reply rate by product; what prospects replied; and recent activity. Every chart can be
+shown as a table. The **Today** page stays the place for what needs doing now.
