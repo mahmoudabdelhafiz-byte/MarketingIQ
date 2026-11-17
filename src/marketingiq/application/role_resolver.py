@@ -46,6 +46,97 @@ ABBREVIATIONS: dict[str, str] = {
     "hod": "head of department",
 }
 AMBIGUOUS_ACRONYMS = frozenset({"cpo", "cco", "cdo", "cso", "cao", "cxo", "cbo"})
+
+# Arabic job-title vocabulary, translated to English before matching. Longest phrases are applied
+# first, so "نائب الرئيس التنفيذي" (EVP) is not read as "الرئيس التنفيذي" (CEO). Keys are written
+# in normalized form (see _normalize_arabic): no diacritics, plain alef, ه for ة, ي for ى.
+ARABIC_TITLE_TERMS: tuple[tuple[str, str], ...] = (
+    ("الرئيس التنفيذي لتقنيه المعلومات", "chief information officer"),
+    ("الرئيس التنفيذي للمعلومات", "chief information officer"),
+    ("الرئيس التنفيذي للتقنيه", "chief technology officer"),
+    ("الرئيس التنفيذي للتكنولوجيا", "chief technology officer"),
+    ("الرئيس التنفيذي للموارد البشريه", "chief human resources officer"),
+    ("الرئيس التنفيذي للماليه", "chief financial officer"),
+    ("الرئيس التنفيذي للعمليات", "chief operating officer"),
+    ("الرئيس التنفيذي للتسويق", "chief marketing officer"),
+    ("الرئيس التنفيذي التجاري", "chief commercial officer"),
+    ("نائب الرئيس التنفيذي", "executive vice president"),
+    ("نائب رئيس تنفيذي", "executive vice president"),
+    ("الرئيس التنفيذي", "chief executive officer"),
+    ("رئيس تنفيذي", "chief executive officer"),
+    ("المدير التنفيذي", "chief executive officer"),
+    ("رئيس مجلس الاداره", "chairman"),
+    ("العضو المنتدب", "managing director"),
+    ("المدير العام", "general manager"),
+    ("مدير عام", "general manager"),
+    ("الشريك المؤسس", "co founder"),
+    ("المؤسس", "founder"),
+    ("مؤسس", "founder"),
+    ("نائب الرئيس", "vice president"),
+    ("نائب رئيس", "vice president"),
+    ("نائب المدير", "deputy director"),
+    ("رئيس قسم", "head of"),
+    ("رئيس اداره", "head of"),
+    ("مدير اداره", "director of"),
+    ("مستشار", "advisor to"),
+    ("مساعد", "assistant"),
+    ("الموارد البشريه", "human resources"),
+    ("شؤون الموظفين", "personnel"),
+    ("راس المال البشري", "human resources"),
+    ("تقنيه المعلومات", "information technology"),
+    ("تكنولوجيا المعلومات", "information technology"),
+    ("التحول الرقمي", "digital transformation"),
+    ("الامن السيبراني", "cybersecurity"),
+    ("امن المعلومات", "information security"),
+    ("الاتصال المؤسسي", "corporate communications"),
+    ("الاتصالات المؤسسيه", "corporate communications"),
+    ("العلاقات العامه", "public relations"),
+    ("التسويق", "marketing"),
+    ("المبيعات", "sales"),
+    ("تطوير الاعمال", "business development"),
+    ("العمليات", "operations"),
+    ("الخدمات المشتركه", "shared services"),
+    ("الماليه", "finance"),
+    ("القانونيه", "legal"),
+    ("الامتثال", "compliance"),
+    ("المشتريات", "procurement"),
+    ("مدير", "manager"),
+    ("مديره", "manager"),
+    ("رئيس", "head"),
+    ("سابقا", "former"),
+    ("سابق", "former"),
+)
+_ARABIC = re.compile(r"[\u0600-\u06ff]")
+_ARABIC_DIACRITICS = re.compile(r"[\u064b-\u0652\u0670\u0640]")
+
+
+def _normalize_arabic(value: str) -> str:
+    value = _ARABIC_DIACRITICS.sub("", value)
+    value = re.sub("[أإآٱ]", "ا", value)
+    return value.replace("ة", "ه").replace("ى", "ي")
+
+
+def _with_prefixed_forms(terms):
+    # "ال" + word becomes "لل" + word after the preposition "ل" ("for the"): للمبيعات, للموارد.
+    expanded = list(terms)
+    for arabic, english in terms:
+        if arabic.startswith("ال"):
+            expanded.append(("لل" + arabic[2:], english))
+    return tuple(sorted(expanded, key=lambda item: -len(item[0])))
+
+
+_ARABIC_TERMS_LONGEST_FIRST = _with_prefixed_forms(ARABIC_TITLE_TERMS)
+
+
+def translate_arabic_title(value: str) -> str:
+    """English role words for an Arabic (or mixed) job title; other text is left as it is."""
+
+    if not _ARABIC.search(value):
+        return value
+    text = f" {_normalize_arabic(value)} "
+    for arabic, english in _ARABIC_TERMS_LONGEST_FIRST:
+        text = text.replace(arabic, f" {english} ")
+    return re.sub(r"\s+", " ", text).strip()
 STOPWORDS = frozenset({"of", "and", "the", "for", "to", "in", "at", "a", "an", "our"})
 # Words that mean the person supports, rather than holds, a role.
 SUPPORT_QUALIFIERS = frozenset(
@@ -161,7 +252,7 @@ _ROLE_RANK = {RoleMatch.HIGH: 3, RoleMatch.MEDIUM: 2, RoleMatch.LOW: 1, RoleMatc
 def normalize_text(value: str | None) -> str:
     """Lower-case, strip punctuation and expand unambiguous abbreviations."""
 
-    text = (value or "").lower().replace("&", " and ").replace("/", " ")
+    text = translate_arabic_title(value or "").lower().replace("&", " and ").replace("/", " ")
     text = re.sub(r"\bl\s*and\s*d\b", "learning and development", text)
     text = re.sub(r"\bc[\s-]?suite\b", "c suite", text)
     text = re.sub(r"\bc[\s-]?level\b", "c level", text)
@@ -254,18 +345,19 @@ class RoleResolution:
 
 def _match_one(candidate: PersonCandidate, persona: PersonaSpec) -> RoleResolution:
     title = normalize_text(candidate.title)
-    raw_tokens = set(re.findall(r"[a-z0-9]+", (candidate.title or "").lower()))
+    raw_title = translate_arabic_title(candidate.title or "")
+    raw_tokens = set(re.findall(r"[a-z0-9]+", raw_title.lower()))
     department = normalize_text(candidate.department)
     seniority = normalize_text(candidate.seniority)
     ambiguous = bool(raw_tokens & AMBIGUOUS_ACRONYMS)
 
-    if title and FORMER_MARKERS.search(candidate.title or ""):
+    if title and FORMER_MARKERS.search(raw_title):
         return RoleResolution(
             persona, title, RoleMatch.NONE, 90, "Title describes a former or past role"
         )
 
     support = bool(set(title.split()) & SUPPORT_QUALIFIERS) or bool(
-        SUPPORT_PHRASES.search(candidate.title or "")
+        SUPPORT_PHRASES.search(raw_title)
     )
     persona_departments = set(persona.hunter_departments)
     department_hit = bool(department) and (
