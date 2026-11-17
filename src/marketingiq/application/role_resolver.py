@@ -49,7 +49,7 @@ AMBIGUOUS_ACRONYMS = frozenset({"cpo", "cco", "cdo", "cso", "cao", "cxo", "cbo"}
 
 # Arabic job-title vocabulary, translated to English before matching. Longest phrases are applied
 # first, so "نائب الرئيس التنفيذي" (EVP) is not read as "الرئيس التنفيذي" (CEO). Keys are written
-# in normalized form (see _normalize_arabic): no diacritics, plain alef, ه for ة, ي for ى.
+# in normalized form (see normalize_arabic): no diacritics, plain alef, ه for ة, ي for ى.
 ARABIC_TITLE_TERMS: tuple[tuple[str, str], ...] = (
     ("الرئيس التنفيذي لتقنيه المعلومات", "chief information officer"),
     ("الرئيس التنفيذي للمعلومات", "chief information officer"),
@@ -110,7 +110,7 @@ _ARABIC = re.compile(r"[\u0600-\u06ff]")
 _ARABIC_DIACRITICS = re.compile(r"[\u064b-\u0652\u0670\u0640]")
 
 
-def _normalize_arabic(value: str) -> str:
+def normalize_arabic(value: str) -> str:
     value = _ARABIC_DIACRITICS.sub("", value)
     value = re.sub("[أإآٱ]", "ا", value)
     return value.replace("ة", "ه").replace("ى", "ي")
@@ -133,7 +133,7 @@ def translate_arabic_title(value: str) -> str:
 
     if not _ARABIC.search(value):
         return value
-    text = f" {_normalize_arabic(value)} "
+    text = f" {normalize_arabic(value)} "
     for arabic, english in _ARABIC_TERMS_LONGEST_FIRST:
         text = text.replace(arabic, f" {english} ")
     return re.sub(r"\s+", " ", text).strip()
