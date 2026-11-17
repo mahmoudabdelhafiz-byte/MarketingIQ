@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from marketingiq.application.email_policy import is_sendable
 from marketingiq.application.role_resolver import FORMER_MARKERS, normalize_text
 from marketingiq.domain.decision_makers import (
     ContactStatus,
@@ -63,6 +64,11 @@ class EmailView:
     verification_status: EmailVerificationStatus
     verified_at: datetime | None = None
     origin: str | None = None
+    verification_score: int | None = None
+
+    @property
+    def sendable(self) -> bool:
+        return is_sendable(self.verification_status, self.verification_score)
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -102,7 +108,10 @@ def best_email(emails: Sequence[EmailView]) -> EmailView | None:
     }
     if not emails:
         return None
-    return sorted(emails, key=lambda e: (order[e.verification_status], e.email))[0]
+    return sorted(
+        emails,
+        key=lambda e: (order[e.verification_status], -(e.verification_score or 0), e.email),
+    )[0]
 
 
 def email_state(email: EmailView | None) -> str:
@@ -112,6 +121,8 @@ def email_state(email: EmailView | None) -> str:
         return "UNKNOWN"
     if email.verification_status == EmailVerificationStatus.VALID:
         return "VERIFIED"
+    if email.sendable:
+        return "ACCEPT_ALL"  # domain accepts every address; Hunter score is high enough
     if email.verification_status == EmailVerificationStatus.INVALID:
         return "INVALID"
     if email.verified_at is not None:
@@ -276,7 +287,7 @@ def contact_status(
             return ContactStatus.NOT_RELEVANT
     if email is None or email.verification_status == EmailVerificationStatus.INVALID:
         return ContactStatus.CONTACT_FOUND_EMAIL_MISSING
-    if email.verification_status == EmailVerificationStatus.VALID:
+    if email.sendable:
         return ContactStatus.READY_FOR_DRAFT
     return ContactStatus.EMAIL_UNVERIFIED
 

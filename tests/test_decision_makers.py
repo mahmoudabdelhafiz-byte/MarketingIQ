@@ -142,10 +142,13 @@ class FakeHunter:
     )
     costs_credits = True
 
-    def __init__(self, contacts=(), found=None, verification="valid", configured=True):
+    def __init__(
+        self, contacts=(), found=None, verification="valid", configured=True, score=90
+    ):
         self.contacts = tuple(contacts)
         self.found = found
         self.verification = verification
+        self.score = score
         self._configured = configured
         self.calls = {"search": 0, "find": 0, "verify": 0}
         self.search_args = None
@@ -176,7 +179,11 @@ class FakeHunter:
         self.calls["verify"] += 1
         status = self.verification(email) if callable(self.verification) else self.verification
         return ContactProviderResult(
-            self.key, (ProviderContact(reference=status, email=email, confidence=90),), "v", 1, 97
+            self.key,
+            (ProviderContact(reference=status, email=email, confidence=self.score),),
+            "v",
+            1,
+            97,
         )
 
 
@@ -649,7 +656,8 @@ def test_email_find_and_verification_only_for_ranked_people(session):
             )
         return None
 
-    hunter = FakeHunter(found=found, verification="accept_all")
+    # Below the accept-all threshold (80), so the email stays unverified.
+    hunter = FakeHunter(found=found, verification="accept_all", score=70)
     service = make_service(session, case, hunter=hunter)
     summary = service.discover(case["relationship"].id, allow_provider_credits=True)
 

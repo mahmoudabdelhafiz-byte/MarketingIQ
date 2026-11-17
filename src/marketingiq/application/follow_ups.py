@@ -25,6 +25,7 @@ from marketingiq.application.authorization import (
     require_permission,
 )
 from marketingiq.application.decision_makers import targeting_block_reason
+from marketingiq.application.email_policy import is_sendable
 from marketingiq.application.errors import ConflictError, NotFoundError
 from marketingiq.application.languages import DEFAULT_LANGUAGE, draft_language, pack
 from marketingiq.application.outbound import OutboundSenderRegistry
@@ -42,7 +43,6 @@ from marketingiq.domain.models import (
     Company,
     ContactCandidate,
     ContactEmail,
-    EmailVerificationStatus,
     OrganizationCompany,
     OrganizationMembership,
     Product,
@@ -549,7 +549,7 @@ def _stop_reason(session: Session, item: OutboundFollowUp) -> str | None:
                 return f"CONVERSATION_{preferred}"
         return "CONVERSATION_REPLIED"
     email = session.get(ContactEmail, item.contact_email_id)
-    if email is None or email.verification_status != EmailVerificationStatus.VALID:
+    if email is None or not is_sendable(email.verification_status, email.verification_score):
         return "EMAIL_NOT_VERIFIED"
     suppressed = session.scalar(
         select(SuppressionEntry.id).where(
