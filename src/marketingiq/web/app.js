@@ -102,10 +102,12 @@
   };
 
   const GOOD = new Set([
+    "CONNECTED",
     "ACTIVE", "COMPLETED", "COMPLETE", "SENT", "APPROVED", "VALID", "HIGH_PRIORITY", "QUALIFIED",
     "WON", "EXACT", "STRONG", "A", "B", "available", "DONE", "CURRENT", "true",
   ]);
   const WARN = new Set([
+    "NOT_CONFIGURED",
     "DRAFT", "PARTIAL", "PENDING", "RUNNING", "NEEDS_MORE_RESEARCH", "NURTURE", "STALE", "RISKY",
     "ACCEPT_ALL", "C", "READY", "CONFLICTED", "UNVERIFIABLE",
   ]);
@@ -227,7 +229,17 @@
     else if (WARN.has(text)) tone = "warn";
     else if (BAD.has(text)) tone = "bad";
     else if (INFO.has(text)) tone = "info";
-    return h("span", { class: `badge ${tone}` }, text.replaceAll("_", " "));
+    return h("span", { class: `badge ${tone}`, title: text }, humanize(text));
+  }
+
+  // NEEDS_MORE_RESEARCH -> "Needs more research"; abbreviations such as AI or SMTP stay as they are.
+  const ACRONYMS = new Set(["A", "B", "C", "D", "AI", "SMTP", "IMAP", "ICP", "CIO", "CTO", "CEO", "HR", "IT", "API", "URL", "SA", "AE", "EG", "OM", "KW", "QA", "BH"]);
+  function humanize(text) {
+    const value = String(text ?? "");
+    if (!/^[A-Z0-9_ ]+$/.test(value) && !/^[a-z0-9_]+$/.test(value)) return value;
+    if (ACRONYMS.has(value)) return value;
+    const words = value.replaceAll("_", " ").toLowerCase().trim();
+    return words.charAt(0).toUpperCase() + words.slice(1);
   }
 
   function slugify(text) {
@@ -591,7 +603,15 @@
   function shell(active, content) {
     const membership = currentMembership();
     const memberships = state.me.memberships || [];
-    const link = (href, label, key) => h("a", { href, class: active === key ? "active" : "" }, label);
+    const counts = state.navCounts || {};
+    const link = (href, label, key) =>
+      h(
+        "a",
+        { href, class: active === key ? "active" : "", "aria-current": active === key ? "page" : null },
+        h("span", null, label),
+        counts[key] ? h("span", { class: "count", "aria-label": `${counts[key]} waiting` }, String(counts[key])) : null,
+      );
+    const group = (title) => h("div", { class: "nav-group" }, title);
     const orgSwitch =
       memberships.length > 1
         ? select(
@@ -618,24 +638,28 @@
         h(
           "nav",
           { class: "nav" },
-          link("#/dashboard", "Dashboard", "dashboard"),
-          link("#/products", "Products & ICPs", "products"),
+          group("Today"),
+          link("#/dashboard", "Overview", "dashboard"),
+          link("#/replies", "Replies", "replies"),
+          link("#/follow-ups", "Follow-ups", "follow-ups"),
+          group("Pipeline"),
           link("#/companies", "Companies", "companies"),
           link("#/automation", "Automation", "automation"),
-          link("#/follow-ups", "Follow-ups", "follow-ups"),
-          link("#/replies", "Replies", "replies"),
-          link("#/costs", "Costs", "costs"),
+          group("Setup"),
+          link("#/products", "Products & ICPs", "products"),
+          link("#/suppressions", "Do-not-contact list", "suppressions"),
+          group("Reports"),
           link("#/insights", "Insights", "insights"),
-          link("#/suppressions", "Suppression list", "suppressions"),
+          link("#/costs", "Costs", "costs"),
         ),
         h("div", { class: "spacer" }),
         orgSwitch,
         h(
           "div",
           { class: "who" },
-          h("div", null, membership?.organization_name || "Organization"),
+          h("strong", null, membership?.organization_name || "Organization"),
           h("div", null, state.me.email),
-          h("div", null, (membership?.role || "").replaceAll("_", " ").toLowerCase()),
+          h("div", null, humanize(membership?.role || "")),
           h("a", { href: "#", onclick: (e) => (e.preventDefault(), logout()) }, "Sign out"),
         ),
       ),
@@ -677,6 +701,7 @@
     const [m, key, fn] = match || [null, "dashboard", () => viewDashboard()];
     const root = clear(document.getElementById("app"));
     root.append(shell(key, h("div", { class: "boot" }, "Loading…")));
+    refreshNavCounts();
     let content;
     try {
       content = await fn(m);
@@ -688,91 +713,168 @@
     clear(root).append(shell(key, content));
   }
 
-  const refresh = () => render();
+  const refresh = () => {
+    state.navCountsAt = 0;
+    return render();
+  };
+
+  // Amber counters in the menu: replies and follow-ups waiting for a person.
+  async function refreshNavCounts() {
+    if (Date.now() - (state.navCountsAt || 0) < 60000) return;
+    state.navCountsAt = Date.now();
+    const [replies, followUps] = await Promise.all([
+      soft(get("/replies?status=NEW"), null),
+      soft(get("/follow-ups?status=AWAITING_APPROVAL"), null),
+    ]);
+    const next = { replies: replies?.length || 0, "follow-ups": followUps?.length || 0 };
+    const changed = JSON.stringify(next) !== JSON.stringify(state.navCounts || {});
+    state.navCounts = next;
+    if (changed) {
+      const nav = document.querySelector(".sidebar");
+      if (nav) {
+        const key = (location.hash.match(/^#\/([a-z-]+)/) || [])[1] || "dashboard";
+        const fresh = shell(key, h("div")).querySelector(".sidebar");
+        nav.replaceWith(fresh);
+      }
+    }
+  }
 
   // ---------------------------------------------------------------------------------------
   // Dashboard
 
   async function viewDashboard() {
-    const [productList, companies, research, outbound, ai, summary] = await Promise.all([
+    const [productList, companies, research, outbound, ai, replies, followUps, report] = await Promise.all([
       products(true),
       get("/companies"),
       soft(get("/providers/status"), []),
       soft(get("/outbound/providers/status"), []),
       soft(get("/campaign-ai/status"), null),
-      soft(get("/learning/conversion-summary"), null),
+      soft(get("/replies?status=NEW"), []),
+      soft(get("/follow-ups?status=AWAITING_APPROVAL"), []),
+      soft(get("/costs/report?days=30"), null),
     ]);
     const activeProducts = productList.filter((p) => p.status === "ACTIVE");
-    const counts = summary?.counts || {};
-    const stat = (label, value) => h("div", { class: "card stat" }, h("div", { class: "label" }, label), h("div", { class: "value" }, value));
+    const funnel = report?.funnel || {};
+    const toResearch = companies.filter((c) => (c.lifecycle_status || "discovered") === "discovered").length;
 
-    const hasIcp = activeProducts.length > 0 && (await Promise.all(activeProducts.map((p) => soft(get(`/products/${p.id}/icps`), [])))).some((list) => list.some((icp) => icp.is_active));
-    const steps = [
-      [activeProducts.length > 0, "Add a product and activate it", "Describe what you sell, the value proposition and the buyer roles you target.", "#/products"],
-      [hasIcp, "Define and activate an ICP", "Your ideal customer profile: industries, countries, company size and signals.", "#/products"],
-      [companies.length > 0, "Add target companies", "Add companies one by one or import a CSV list.", "#/companies"],
-      [(counts.total ?? summary?.sample_size ?? 0) > 0, "Run the workflow and send your first approved email", "Research → fit → qualify → contacts → draft → approve → send.", "#/companies"],
+    // What a person should do today, most time-sensitive first.
+    const needs = [
+      [replies.length, true, "Prospect replies to answer", "Each has a suggested answer and two meeting times.", "#/replies", "Answer replies"],
+      [followUps.length, true, "Follow-ups waiting for approval", "They are due now; send, edit or skip each one.", "#/follow-ups", "Review follow-ups"],
+      [toResearch, false, "Companies not worked on yet", "Advance them to research, qualify and find decision makers.", "#/companies", "Open companies"],
     ];
+    const due = needs.filter(([count, urgent]) => urgent && count > 0);
 
-    const integration = (label, ok, detail) =>
-      h("tr", null, h("td", null, label), h("td", null, badge(ok ? "available" : "not_configured")), h("td", { class: "muted small" }, detail || ""));
+    const hasIcp =
+      activeProducts.length > 0 &&
+      (await Promise.all(activeProducts.map((p) => soft(get(`/products/${p.id}/icps`), [])))).some((list) => list.some((icp) => icp.is_active));
+    const sending = outbound.find((p) => p.provider_key === "SMTP");
+    const hunter = research.find((p) => p.provider_key === "HUNTER");
+    const setup = [
+      [activeProducts.length > 0, "Add and activate a product", "What you sell, the value proposition and the buyer roles.", "#/products"],
+      [hasIcp, "Set an ideal customer profile", "Industries, countries and company size you sell to.", "#/products"],
+      [companies.length > 0, "Add target companies", "One by one, a CSV list, or your own contact list.", "#/companies"],
+      [Boolean(sending?.configured), "Connect email sending", "SMTP settings in the hosting environment.", null],
+    ];
+    const setupDone = setup.every(([done]) => done);
+    const money = (value) => (value == null ? "—" : `${report.currency} ${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}`);
 
     return h(
       "div",
       null,
-      pageHead("Dashboard", currentMembership()?.organization_name || ""),
+      pageHead("Today", due.length ? "Start with the items marked in amber." : `${currentMembership()?.organization_name || ""}: nothing is waiting for you.`),
       h(
         "div",
-        { class: "grid cols-4" },
-        stat("Active products", `${activeProducts.length} / ${productList.length}`),
-        stat("Companies", companies.length),
-        stat("Opportunities", summary?.sample_size ?? 0),
-        stat("Won", counts.won ?? counts.WON ?? 0),
+        { class: "card" },
+        h("div", { class: "card-head" }, h("h2", null, "Needs you")),
+        due.length === 0 ? h("div", { class: "all-clear" }, "✓ No replies or follow-ups are waiting.") : null,
+        h(
+          "ul",
+          { class: "needs" },
+          needs.map(([count, urgent, title, text, href, action]) =>
+            h(
+              "li",
+              { class: urgent && count > 0 ? "due" : "" },
+              h("div", { class: "n" }, String(count)),
+              h("div", { class: "what" }, h("strong", null, title), h("span", { class: "muted small" }, text)),
+              h("a", { class: `btn ${urgent && count > 0 ? "primary" : ""}`, href }, action),
+            ),
+          ),
+        ),
       ),
+      report
+        ? h(
+            "div",
+            { class: "card" },
+            h("div", { class: "card-head" }, h("h2", null, "Last 30 days"), h("a", { href: "#/costs", class: "small" }, "Costs and rates")),
+            h(
+              "div",
+              { class: "figures" },
+              [
+                ["Emails sent", funnel.emails_sent ?? 0],
+                ["Replies", funnel.replies ?? 0],
+                ["Meetings", funnel.meetings ?? 0],
+                ["Won", funnel.won ?? 0],
+                ["Cost per meeting", money(report.unit_costs?.per_meeting)],
+              ].map(([label, value]) => h("div", null, h("div", { class: "value" }, String(value)), h("div", { class: "label" }, label))),
+            ),
+          )
+        : null,
       h(
         "div",
         { class: "grid cols-2" },
-        h(
-          "div",
-          { class: "card" },
-          h("h2", null, "Getting started"),
-          h(
-            "ol",
-            { class: "steps" },
-            steps.map(([done, title, text, href], index) =>
+        setupDone
+          ? null
+          : h(
+              "div",
+              { class: "card" },
+              h("h2", null, "Finish setting up"),
               h(
-                "li",
-                null,
-                h("div", { class: `num ${done ? "done" : ""}` }, done ? "✓" : index + 1),
-                h("div", null, h("a", { href }, h("strong", null, title)), h("div", { class: "muted small" }, text)),
-              ),
-            ),
-          ),
-        ),
-        h(
-          "div",
-          { class: "card" },
-          h("h2", null, "Integrations"),
-          h(
-            "table",
-            null,
-            h(
-              "tbody",
-              null,
-              research.map((p) =>
-                integration(
-                  `Research: ${p.provider_key}`,
-                  p.credentials_configured,
-                  p.costs_credits ? "Uses provider credits" : "Free public web research",
+                "ol",
+                { class: "steps" },
+                setup.map(([done, title, text, href], index) =>
+                  h(
+                    "li",
+                    null,
+                    h("div", { class: `num ${done ? "done" : ""}` }, done ? "✓" : String(index + 1)),
+                    h("div", null, href ? h("a", { href }, h("strong", null, title)) : h("strong", null, title), h("div", { class: "muted small" }, text)),
+                  ),
                 ),
               ),
-              outbound.map((p) => integration(`Email sending: ${p.provider_key}`, p.configured, "Outbound SMTP")),
-              ai ? integration("AI campaign drafting", ai.configured, ai.model ? `Model ${ai.model}` : "") : null,
             ),
+        setupDone
+          ? null
+          : h(
+          "div",
+          { class: "card" },
+          h("h2", null, "Connections"),
+          table(
+            [
+              { label: "Service", render: (r) => r[0] },
+              { label: "Status", render: (r) => badge(r[1] ? "CONNECTED" : "NOT_CONFIGURED") },
+              { label: "Note", render: (r) => h("span", { class: "muted small" }, r[2]) },
+            ],
+            [
+              ["Email sending", Boolean(sending?.configured), "Your SMTP mailbox"],
+              ["Company and people data (Hunter)", Boolean(hunter?.credentials_configured), "Uses provider credits"],
+              ["AI writing", Boolean(ai?.configured), ai?.model ? `Model ${ai.model}` : ""],
+            ],
           ),
-          h("p", { class: "muted small" }, "Integrations are configured through the hosting environment variables."),
+          h("p", { class: "muted small" }, "Change these in the hosting environment settings."),
         ),
       ),
+      setupDone
+        ? h(
+            "div",
+            { class: "connections" },
+            h("span", { class: "muted small" }, "Connections"),
+            [
+              ["Email sending", Boolean(sending?.configured)],
+              ["Hunter", Boolean(hunter?.credentials_configured)],
+              ["AI writing", Boolean(ai?.configured)],
+            ].map(([label, ok]) => h("span", { class: `badge ${ok ? "good" : "warn"}` }, `${label}: ${ok ? "connected" : "not set up"}`)),
+          )
+        : null,
     );
   }
 
@@ -2657,14 +2759,23 @@
       field("Answer", body, "Review before sending. Sent in the same email thread."),
       h(
         "div",
-        { class: "row" },
-        h("button", { class: "btn", onclick: (e) => act(e.currentTarget, "suggest", undefined, "Suggestion updated") }, "Suggest with AI"),
-        h("button", { class: "btn primary", onclick: (e) => send(e.currentTarget, false) }, "Send answer"),
-        unsubscribeAsk ? h("button", { class: "btn", onclick: (e) => send(e.currentTarget, true) }, "Send & unsubscribe") : null,
-        h("button", { class: "btn", onclick: (e) => act(e.currentTarget, "meeting-booked", {}, "Meeting recorded in the pipeline") }, "Meeting booked"),
-        h("button", { class: "btn", onclick: (e) => act(e.currentTarget, "not-interested", undefined, "Marked not interested") }, "Not interested"),
-        h("button", { class: "btn danger", onclick: (e) => act(e.currentTarget, "unsubscribe", undefined, "Unsubscribed") }, "Unsubscribe"),
-        h("button", { class: "btn", onclick: (e) => act(e.currentTarget, "dismiss", undefined, "Dismissed") }, "Dismiss"),
+        { class: "action-bar" },
+        h(
+          "div",
+          { class: "row" },
+          h("button", { class: "btn primary", onclick: (e) => send(e.currentTarget, false) }, "Send answer"),
+          unsubscribeAsk ? h("button", { class: "btn", onclick: (e) => send(e.currentTarget, true) }, "Send and unsubscribe") : null,
+          h("button", { class: "btn", onclick: (e) => act(e.currentTarget, "suggest", undefined, "New suggestion written") }, "Rewrite with AI"),
+        ),
+        h(
+          "div",
+          { class: "outcome", role: "group", "aria-label": "Record the outcome" },
+          h("span", null, "Outcome:"),
+          h("button", { class: "btn small", onclick: (e) => act(e.currentTarget, "meeting-booked", {}, "Meeting recorded in the pipeline") }, "Meeting booked"),
+          h("button", { class: "btn small", onclick: (e) => act(e.currentTarget, "not-interested", undefined, "Marked not interested") }, "Not interested"),
+          h("button", { class: "btn small danger", onclick: (e) => act(e.currentTarget, "unsubscribe", undefined, "Unsubscribed") }, "Unsubscribe"),
+          h("button", { class: "btn small link", onclick: (e) => act(e.currentTarget, "dismiss", undefined, "Dismissed") }, "Dismiss"),
+        ),
       ),
     );
   }
