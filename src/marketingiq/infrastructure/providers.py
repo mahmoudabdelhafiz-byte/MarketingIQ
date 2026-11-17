@@ -222,6 +222,33 @@ def _text(value) -> str | None:
     return None
 
 
+FREE_PLAN_SEARCH_LIMIT = 10
+
+
+class HunterRequestError(ProviderError):
+    """A rejected Hunter request, with Hunter's own error id and message (never the API key)."""
+
+    def __init__(self, message: str, status_code: int, error_id: str | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.error_id = error_id
+
+
+def _hunter_request_error(response) -> HunterRequestError:
+    error_id = detail = None
+    try:
+        errors = response.json().get("errors") or []
+        if errors and isinstance(errors[0], dict):
+            error_id = str(errors[0].get("id") or "")[:60] or None
+            detail = str(errors[0].get("details") or "")[:200] or None
+    except (ValueError, AttributeError):
+        pass
+    message = f"Hunter request failed with HTTP {response.status_code}"
+    if error_id or detail:
+        message += f": {error_id or ''}{' - ' if error_id and detail else ''}{detail or ''}"
+    return HunterRequestError(message, response.status_code, error_id)
+
+
 class HunterProvider:
     key = "HUNTER"
     capabilities = frozenset(
@@ -339,7 +366,7 @@ class HunterProvider:
         if response.status_code in {401, 403}:
             raise ProviderAuthenticationError("Hunter authentication failed")
         if response.status_code >= 400:
-            raise ProviderError(f"Hunter request failed with HTTP {response.status_code}")
+            raise _hunter_request_error(response)
         try:
             payload = response.json()
         except ValueError as error:
@@ -405,8 +432,8 @@ class HunterProvider:
         )
 
     def search_contacts(self, company_identifier: str, max_results: int) -> ContactProviderResult:
-        payload, response = self._request(
-            "domain-search", {"domain": company_identifier, "limit": max_results}
+        payload, response = self._domain_search(
+            {"domain": company_identifier, "limit": max_results}
         )
         emails = (payload.get("data") or {}).get("emails", [])
         if not isinstance(emails, list):
@@ -435,13 +462,23 @@ class HunterProvider:
             params["department"] = ",".join(sorted(set(departments)))
         if seniorities:
             params["seniority"] = ",".join(sorted(set(seniorities)))
-        payload, response = self._request("domain-search", params)
+        payload, response = self._domain_search(params)
         emails = (payload.get("data") or {}).get("emails", [])
         if not isinstance(emails, list):
             raise ProviderMalformedResponse("Hunter returned malformed contacts")
         return self._result(
             payload, response, tuple(self._contact(x) for x in emails[: params["limit"]])
         )
+
+    def _domain_search(self, params: dict) -> tuple[dict, object]:
+        """Domain Search; smaller Hunter plans cap ``limit`` at 10, so retry once at that cap."""
+        try:
+            return self._request("domain-search", params)
+        except HunterRequestError as error:
+            if error.status_code != 400 or params.get("limit", 0) <= FREE_PLAN_SEARCH_LIMIT:
+                raise
+            params["limit"] = FREE_PLAN_SEARCH_LIMIT
+            return self._request("domain-search", params)
 
     def find_email(self, person: dict) -> ContactProviderResult:
         payload, response = self._request("email-finder", person)
