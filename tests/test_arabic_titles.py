@@ -142,3 +142,18 @@ def test_existing_duplicates_are_marked_excluded_not_deleted(session):
     assert copy.review_status == "EXCLUDED" and copy.review_note.startswith("Duplicate of")
     assert original.review_status != "EXCLUDED"
     assert session.get(ContactCandidate, copy.id) is not None
+
+
+@pytest.mark.parametrize(
+    ("full", "expected"),
+    [
+        ("الأستاذ عبد العزيز الكثيري", ("عبد العزيز", "الكثيري")),
+        ("د. نايف البقمي", ("نايف", "البقمي")),
+        ("Dr. Sara Ali", ("Sara", "Ali")),
+        ("Ava Buyer", ("Ava", "Buyer")),
+    ],
+)
+def test_split_name_drops_honorifics_and_keeps_compound_first_names(full, expected):
+    from marketingiq.application.decision_makers import split_name
+
+    assert split_name(full) == expected

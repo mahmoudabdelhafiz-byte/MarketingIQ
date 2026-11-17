@@ -201,11 +201,22 @@ def _http_url(value: str | None) -> str | None:
     return None
 
 
+_ARABIC_NAME_PREFIXES = frozenset({"عبد", "ابو", "بن", "ابن"})
+
+
+def _is_honorific(token: str) -> bool:
+    return normalize_arabic(token.lower().strip(".")) in _HONORIFICS
+
+
 def split_name(full_name: str) -> tuple[str | None, str | None]:
+    """First and last name, without honorifics; "عبد العزيز" stays one first name."""
     tokens = full_name.split()
+    while len(tokens) > 1 and _is_honorific(tokens[0]):
+        tokens = tokens[1:]
     if len(tokens) < 2:
         return (tokens[0] if tokens else None), None
-    return tokens[0], " ".join(tokens[1:])
+    first_len = 2 if normalize_arabic(tokens[0]) in _ARABIC_NAME_PREFIXES and len(tokens) > 2 else 1
+    return " ".join(tokens[:first_len]), " ".join(tokens[first_len:])
 
 
 # Honorifics that are not part of a person's name (English and Arabic, normalized forms).
@@ -862,6 +873,7 @@ class DecisionMakerService:
             usage.response_status, usage.error_category = "FAILURE", error.category
             usage.completed_at = self.now
             report.notes.append(f"HUNTER_{error.category}")
+            report.notes.append(f"Hunter said: {str(error)[:200]}")
             return []
         usage.success = True
         usage.response_status = "SUCCESS" if result.contacts else "NO_RESULTS"
@@ -1005,6 +1017,8 @@ class DecisionMakerService:
             contact.redistribution_status = RedistributionStatus.RESTRICTED
 
         contact.full_name = contact.full_name or (observation.full_name or "")[:220] or None
+        if contact.first_name and _is_honorific(contact.first_name) and observation.first_name:
+            contact.first_name = contact.last_name = None  # saved before honorifics were removed
         contact.first_name = contact.first_name or (observation.first_name or "")[:100] or None
         contact.last_name = contact.last_name or (observation.last_name or "")[:100] or None
         # The company's own website is the authority for the current title.
