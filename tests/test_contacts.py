@@ -675,3 +675,42 @@ def test_hunter_rejects_invalid_json_and_malformed_data():
     )
     with pytest.raises(ProviderMalformedResponse):
         malformed.search_contacts("example.test", 1)
+
+
+def test_hunter_search_retries_at_plan_limit_and_keeps_hunter_error_text():
+    limits = []
+
+    def handler(request: httpx.Request):
+        limit = int(request.url.params["limit"])
+        limits.append(limit)
+        if limit > 10:
+            return httpx.Response(
+                400,
+                json={"errors": [{"id": "pagination_error", "details": "Limited to 10"}]},
+                request=request,
+            )
+        return httpx.Response(200, json={"data": {"emails": []}}, request=request)
+
+    provider = HunterProvider(
+        api_key="super-secret-key",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    provider.search_decision_makers("example.test", max_results=25)
+    assert limits == [25, 10]
+
+    always_bad = HunterProvider(
+        api_key="super-secret-key",
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    400,
+                    json={"errors": [{"id": "wrong_params", "details": "Bad department"}]},
+                    request=request,
+                )
+            )
+        ),
+    )
+    with pytest.raises(ProviderError) as caught:
+        always_bad.search_contacts("example.test", 5)
+    assert "wrong_params - Bad department" in str(caught.value)
+    assert "super-secret-key" not in str(caught.value)
